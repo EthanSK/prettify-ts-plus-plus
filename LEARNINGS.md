@@ -52,3 +52,5 @@ before creating a publisher version, despite the MIT licence allowing asset reus
 exact version after a failed upload before resubmitting; do not infer upload state from public search alone.
 The fork's published icon is `packages/vscode-extension/assets/logo-plus-plus.png`; the original artwork
 remains in source but is excluded from its package.
+Marketplace caps the icon file at 1,024 KB. Export the canonical packaged icon at 512 pixels and check
+its byte size before upload; the packager now rejects oversized icons before building a release archive.

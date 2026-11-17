@@ -20,6 +20,10 @@ async function packageExtension(outputPath) {
       await fs.cp(path.join(extension, name), path.join(stage, name), { recursive: true });
     }
     const manifest = JSON.parse(await fs.readFile(path.join(extension, "package.json"), "utf8"));
+    // Marketplace rejects icons over 1,024 KB even when packaging succeeds. — Codex (model version unavailable).
+    if (!manifest.icon || (await fs.stat(path.join(stage, manifest.icon))).size > 1024 * 1024) {
+      throw new Error("Extension icon is missing or exceeds the Marketplace limit of 1,024 KB.");
+    }
     const pluginManifest = JSON.parse(await fs.readFile(path.join(plugin, "package.json"), "utf8"));
     manifest.dependencies = { [pluginManifest.name]: pluginManifest.version };
     delete manifest.devDependencies;
