@@ -11,6 +11,7 @@ First public Preview of Prettify TypeScript++, an MIT-licensed fork of
 - Show the original written definition when it adds useful information, followed by TypeScript's normal hover.
 - Bound original-source previews and link to the complete definition.
 - Preserve both Copy commands, cancellation and hover size limits.
+- Give the independent fork its own extension icon.
 
 The type-rendering code is unchanged from the tested private 1.1.3 candidate.
 This release adds public documentation, Preview metadata and the Marketplace distribution path.

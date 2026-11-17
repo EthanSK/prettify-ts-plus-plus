@@ -46,3 +46,9 @@ The fork's main package is a private workspace container, not the extension iden
 must read `packages/vscode-extension/package.json`; the shared root version alone is not a Gallery ID.
 The exact package needs its README, changelog and original MIT licence, and its public download must
 match the uploaded bytes after publisher validation and public latest-version visibility both pass.
+
+Marketplace also requires a distinct extension icon. It rejected the inherited upstream icon as too similar
+before creating a publisher version, despite the MIT licence allowing asset reuse. Inspect the publisher's
+exact version after a failed upload before resubmitting; do not infer upload state from public search alone.
+The fork's published icon is `packages/vscode-extension/assets/logo-plus-plus.png`; the original artwork
+remains in source but is excluded from its package.
