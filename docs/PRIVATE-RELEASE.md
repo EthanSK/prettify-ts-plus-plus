@@ -1,32 +1,59 @@
-# Private release process
+# Release process
 
-Prettify TypeScript++ is a private fork of [Prettify TypeScript](https://github.com/mylesmmurphy/prettify-ts), starting at v1.0.2 (`83c6cc8b1e05d116f542924a842395fd37238c34`). Preserve its MIT copyright and license in source and every VSIX.
+This guide retains its original `PRIVATE-RELEASE.md` filename so links from the private development phase
+continue to resolve. Prettify TypeScript++ is now prepared for public Preview releases under publisher `EthanSK`.
 
-The fork uses its own extension ID, plugin package, commands, settings and request metadata. An upstream plugin must never answer the fork's private protocol or register the same commands. Keep the old product name searchable beside the new protocol owner.
+## Build one candidate
 
-## Local candidate
+1. Use Node 24 and the pnpm version declared in `package.json`; install with the checked-in lockfile.
+2. Review the changed source and run `pnpm typecheck`, `pnpm lint` and `pnpm test:unit`.
+3. Build, then package once with `node scripts/package.js /absolute/output.vsix`. Inspect the archive's manifest,
+   bundled extension/plugin, README, changelog, MIT licence and icon. Record its SHA-256.
+4. Preserve the original Myles Murphy copyright and MIT permission notice in source and every package.
+   Check notices for any added bundled dependencies. Build tools and the editor's TypeScript runtime are not
+   redistributed merely because they appear in development dependencies.
+5. Check the complete Git history being made public and the actual archive for private data and credentials.
+   Local investigation notes, real private-project probes, model prompts/results and ledgers are not release files.
 
-1. Build with the checked-in package-manager version and lockfile: `pnpm install --frozen-lockfile`, then `pnpm build`.
-2. Review the actual source, including new files. Check compiler fidelity, correct bounds, cancellation, copy semantics and adjacent behavior.
-3. Package one candidate with `node scripts/package.js /absolute/output.vsix`. Inspect its manifest, bundled plugin, README, MIT license and icon; record the archive's SHA-256.
-4. Install the exact reviewed VSIX. Preserve a recoverable prior package and existing settings. Keep working editor windows, unsaved buffers, terminals and debugging sessions intact.
-5. Verify installed files separately from loaded runtime. Use an isolated editor profile on a separate test machine for host tests; do not launch development hosts in the user's working editor.
-6. Run broader tests after the viable local install: TypeScript versions, strict optional mode on/off, real-project readability, provider, toggle and both Copy commands. A successful build or compiler-only probe does not prove the painted hover.
+Keep the extension ID, plugin package, commands, settings and request protocol separate from upstream.
+Both Copy commands must preserve the compiler's constraints; hover-only compaction must remain explicit.
 
-## Later public release
+## Local installation and checks
 
-This document prepares the release process. It does not make the repository or a Marketplace listing public.
+Install a reviewed viable local batch promptly when runtime code changes; keep a recoverable prior package,
+existing settings, unsaved buffers, terminals and running jobs. Do not reinstall unchanged runtime code just
+because a release is being prepared. A metadata-only first Marketplace release can keep the tested local
+runtime in use until the supported Gallery installation is available.
 
-The established personal-extension channels are GitHub and VS Code Marketplace under publisher `EthanSK`. Do not inherit another publisher's identity, credentials or Open VSX publication workflow.
+**Local VSIX installation resets auto-update:** VS Code's CLI installs a VSIX as a specific version and pins
+it. Preserve the user's chosen per-extension update setting after a necessary local install; do not silently
+leave automatic updates off. Never edit VS Code's state database or private extension metadata to fake a fix.
 
-When the first public release is authorized:
+Verify installed files separately from loaded runtime. Use an isolated editor profile on a separate test machine
+for host tests, and preserve the working editor. Compiler-only checks do not prove the painted hover.
+Reuse exact earlier evidence for byte-identical runtime bundles and label that reuse explicitly.
 
-1. Finish privacy, license, documentation and artifact checks. Exclude local ledgers, private source probes, model prompts/results and credentials.
-2. Commit and push the reviewed source, retaining upstream history and attribution.
-3. Publish the exact verified VSIX with `vsce publish --packagePath /absolute/output.vsix`; use the existing publisher authorization without printing credentials.
-4. Verify publisher validation, public Gallery visibility of the expected latest version, and byte-for-byte identity of the downloaded archive. Upload success alone is not a verified release.
-5. Reconcile the local installation through the unversioned Gallery identity so ordinary updates remain available. Check Gallery association, loaded version and effective update settings; a matching version number alone is insufficient.
+## Publish and verify
+
+1. Finish the candidate's applicable tests and source review. Inspect the actual staged and untracked paths.
+2. Commit and push the reviewed source, preserving meaningful implementation history and upstream attribution.
+3. Publish the exact verified VSIX with `vsce publish --packagePath /absolute/output.vsix`, using the existing
+   publisher authorization without printing or storing credentials.
+4. Treat upload success as pending. Run `scripts/verify-marketplace-release.mjs --vsix /absolute/output.vsix`
+   with `VSCE_PAT` supplied privately to the process. It requires authenticated publisher validation, public
+   validated-only latest-version visibility and an exact downloaded archive/hash match.
+5. If upload times out, inspect the publisher's exact version before retrying; an older public Gallery response
+   does not prove that the upload failed. Do not publish the same version again while validation is pending.
+6. Reconcile the local installation with the unversioned Gallery ID:
+   `code --install-extension EthanSK.prettify-ts-plus-plus --force`.
+   Verify Gallery source/UUID, version, bundle hashes, the user's enabled auto-update preference and the loaded
+   TypeScript-plugin route. A matching version number alone is insufficient. Do not use `@version` for normal updates.
+
+CI can package and test candidates. Publication remains an intentional release step; merely changing docs,
+pushing source or running a candidate workflow does not publish a Marketplace version.
 
 ## Upstream tracking
 
-Keep fixes small enough to rebase. Track upstream's shared builder and experimental TypeScript 7 API work before taking on a second language backend. The currently installed TypeScript 7 native preview does not run this fork's TypeScript server plugin; an experimental upstream migration exists but is not part of this private candidate.
+Keep fixes small enough to rebase. Follow upstream's shared builder and experimental TypeScript 7 API work
+before taking on a second language backend. TypeScript 7 native preview currently does not run this fork's
+JavaScript TypeScript-server plugin.

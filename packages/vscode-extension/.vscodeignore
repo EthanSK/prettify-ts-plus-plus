@@ -12,6 +12,7 @@
 !package.json
 !LICENSE
 !README.md
+!CHANGELOG.md
 
 # Only include .png and .svg assets
 !assets/**/*.png

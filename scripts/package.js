@@ -1,5 +1,6 @@
-// Build one installable VSIX from the canonical root README/license and the extension/plugin source.
+// Build one installable VSIX from the canonical root README, changelog, license and extension/plugin source.
 // Run directly with an optional output path; temporary staging is removed even when packaging fails.
+// Public release packaging update: Codex (model version unavailable).
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
@@ -12,7 +13,7 @@ const plugin = path.join(root, "packages/typescript-plugin");
 async function packageExtension(outputPath) {
   const stage = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "prettify-ts-package-")));
   try {
-    for (const name of ["README.md", "LICENSE"]) {
+    for (const name of ["README.md", "CHANGELOG.md", "LICENSE"]) {
       await fs.cp(path.join(root, name), path.join(stage, name));
     }
     for (const name of [".vscodeignore", "assets"]) {

@@ -1,60 +1,99 @@
 # Prettify TypeScript++
 
-A private fork of [Prettify TypeScript](https://github.com/mylesmmurphy/prettify-ts) for clearer complex-type hovers in VS Code.
+Read complex TypeScript types in your hover, including the original definition that produced them.
 
-The goal is to make large unions readable while keeping the compiler’s meaning intact. Keep useful enum and union names, make excluded fields clear, and optionally show shared fields once rather than repeating them in every branch. Root types still expand so hovering an alias shows its definition.
+[VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=EthanSK.prettify-ts-plus-plus) ·
+[Report a bug](https://github.com/EthanSK/prettify-ts-plus-plus/issues) · [Changelog](CHANGELOG.md)
 
-This is a development candidate, not a public Marketplace release. See [the private release process](docs/PRIVATE-RELEASE.md) for installation, validation and later publication.
+**Preview:** tested with TypeScript 5.9 and 6.0 using VS Code's JavaScript TypeScript language service.
+TypeScript 7 native preview is not supported. See [compatibility](#compatibility) for the tested scope.
 
-## What the fork checks
+An independent fork of [Prettify TypeScript](https://github.com/mylesmmurphy/prettify-ts), created by
+[Myles Murphy](https://github.com/mylesmmurphy). The original MIT licence and attribution are retained.
 
-- Whole enums versus individual enum members and subsets.
-- Optional `never` versus explicit `undefined`, with `exactOptionalPropertyTypes` enabled and disabled.
-- `ExactlyOneOf`, `AllOrNone`, discriminated unions and intersections.
-- Generic, mapped, conditional, indexed and recursive types.
-- Readonly and optional fields, callable objects, tuples and index signatures.
-- Hover limits, cancellation, settings, and both Copy commands.
+![Named enums and grouped excluded fields in a tested synthetic example](packages/vscode-extension/assets/hover-example.png)
 
-A compact hover is a presentation, not a new type system. The compiler remains responsible for accepted values. Copied output must keep actual constraints, even when a hover groups their explanation.
+## Install
 
-## Build
+Install **Prettify TypeScript++** by **Ethan Sarif-Kattan** from the Marketplace, or run:
 
-Use Node 24 and the pnpm version declared in `package.json`.
+```sh
+code --install-extension EthanSK.prettify-ts-plus-plus
+```
+
+If the original Prettify TypeScript extension is installed, disable it for this workspace to avoid competing
+prettified hovers. Keep VS Code's built-in TypeScript language features enabled.
+
+Hover a type or value in a TypeScript, JavaScript, TSX, JSX or Vue file. The popup can show:
+
+1. **Prettified type** — the expanded type, with useful names and clearer exclusions.
+2. **Source** — the definition as written, when it adds useful information.
+3. **Normal TypeScript hover** — the information supplied by VS Code's language service.
+
+If an already-open project still uses the previous plugin, run **TypeScript: Restart TS Server** when it is
+convenient to interrupt language features. An installation on disk does not prove an existing server reloaded it.
+
+## What changes
+
+- **Useful names stay visible.** Whole enums and matching nested union aliases keep their names. Subsets and
+  individual enum members remain distinct, and the root type still expands.
+- **Excluded fields are easier to scan.** Proven optional-`never` fields can share a `/* never: ... */` comment in
+  the hover. Both Copy commands retain actual property declarations and the compiler's constraints.
+- **Shared union fields can appear once.** Enable `prettify-ts-plus-plus.factorSharedUnionProperties` to put
+  identical fields before the branch differences. This option is off by default.
+- **Original helpers remain understandable.** A useful written definition such as `ExactlyOneOf<...>` can
+  appear in Source below its expansion. The file link opens the full definition.
+
+Source previews stop at 20 lines or 1,500 characters. Max Characters can shorten each preview further.
+Identical, ambiguous or unsupported source is omitted, including merged interfaces, inferred values,
+narrowed annotations, class/function bodies, JSDoc and generated Vue source.
+
+The compiler still decides which values are valid. With `exactOptionalPropertyTypes` off, an optional `never`
+field can explicitly contain `undefined`; the extension preserves that distinction. Truncated hovers are
+previews, and visibly shortened copied output is not a complete replacement for the original declaration.
+
+## Commands and settings
+
+The editor context menu and Command Palette provide **Copy Prettified Type**, **Copy Fully Prettified Type**
+and **Toggle Preview**. Source text is not included in either Copy command.
+
+Search Settings for **Prettify TypeScript++** to control depth, property/union limits, character limits,
+private fields, generic arguments and shared union fields. Settings and commands are separate from the
+original extension.
+
+## Compatibility
+
+- Core renderer checks cover TypeScript **5.9.3** and **6.0.3** with strict optional properties both on and off.
+- The private candidate's packaged editor checks passed on **macOS**, VS Code **1.144.0**, TypeScript **6.0.3**
+  and Vue language tools **3.1.1**, including JavaScript, JSX, TypeScript, TSX and Vue examples.
+- The extension declares VS Code **1.100.0 or newer**. Broader editor/platform checks run through the project's
+  CI workflow; this Preview does not claim exhaustive coverage of every compiler, project or extension combination.
+- **TypeScript 7 native preview is not supported:** it does not load this JavaScript language-service plugin.
+  Use the ordinary TypeScript language service for this extension.
+
+When reporting a problem, include your VS Code and TypeScript versions, relevant extension settings and a
+small reproducible type. Remove private code and credentials before posting it.
+
+## Build and test
+
+Use Node 24 and the pnpm version declared in `package.json`:
 
 ```sh
 pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm lint
+pnpm test:unit
 pnpm build
 node scripts/package.js /absolute/output/prettify-ts-plus-plus.vsix
 ```
 
-Install the exact reviewed package with VS Code’s **Install from VSIX** command or its `code --install-extension /absolute/output/prettify-ts-plus-plus.vsix` CLI. Enable only the intended hover extension to avoid duplicate prettified previews. Keep the upstream extension available for rollback.
+The [editor test guide](test/README.md) covers provider, language and installed-package checks.
+The [release guide](docs/PRIVATE-RELEASE.md) describes packaging, Marketplace verification and updates.
 
-A package installed on disk can differ from the code loaded in an existing editor window. Verify activation separately and preserve live editor work before any extension-host restart.
+## Upstream and licence
 
-## Shared fields
+Forked from Prettify TypeScript v1.0.2 (`83c6cc8b1e05d116f542924a842395fd37238c34`), with upstream history
+retained. Original copyright: **Myles Murphy**. [MIT licence](LICENSE).
 
-Enable `prettify-ts-plus-plus.factorSharedUnionProperties` to show fields shared by every union branch once, followed by the branch differences. It is off by default; readonly, optionality, resolved types and exclusions must match before a field can be shared.
-
-Enum names and proven optional-`never` fields are clearer automatically. Hover summaries can group several excluded fields in a `/* never: ... */` comment; both Copy commands keep real property declarations. Without `exactOptionalPropertyTypes`, an optional `never` field can still explicitly contain `undefined`, just as in the original source.
-
-## Authored source
-
-When the original definition adds useful information, a separate Source section follows the prettified type. It reads the actual alias, interface or matching annotation, preserving helper expressions such as `ExactlyOneOf<...>`. TypeScript's ordinary hover remains below it.
-
-Source previews stop at 20 lines or 1,500 characters, and the file link opens the full definition. Max Characters can shorten the preview further. Identical definitions and ambiguous or unsupported source are omitted; this includes merged interfaces, inferred values, narrowed annotations, class/function bodies, JSDoc and generated Vue source. Both Copy commands continue returning only the resolved type.
-
-## Checks
-
-```sh
-pnpm typecheck
-pnpm lint
-pnpm test:unit
-```
-
-The [editor test guide](test/README.md) covers real provider, language and packaging checks. Run editor hosts in an isolated profile on a separate test machine rather than the working editor. Compiler-only checks do not prove visual hover quality.
-
-## Upstream and license
-
-Forked from v1.0.2 (`83c6cc8b1e05d116f542924a842395fd37238c34`), with upstream history retained. Original copyright: Myles Murphy. [MIT license](LICENSE).
-
-The fork’s own extension, plugin, settings, commands and request metadata are isolated from upstream. It uses the existing TypeScript server plugin architecture and targets TypeScript 5.9 and 6.0. Current TypeScript 7 native-preview releases do not run this plugin; upstream has an experimental migration in progress.
+This fork is maintained independently by Ethan Sarif-Kattan. It keeps its own extension ID, plugin, commands,
+settings and request protocol. Improvements suitable for the original project can also be contributed upstream.

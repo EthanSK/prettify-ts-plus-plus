@@ -1,5 +1,5 @@
-# Private candidate packaging only. Public Marketplace release remains a separate explicit action.
-name: Package private candidate
+# Package without publishing; Marketplace publication uses the exact reviewed archive.
+name: Package release candidate
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: private-candidate-${{ github.ref }}
+  group: release-candidate-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:

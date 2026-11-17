@@ -33,3 +33,16 @@ Own-renderer Electron captures can verify an isolated editor without recording t
 Keep disposable VS Code integration-profile paths short. A version-specific profile path exceeded the macOS Unix socket path bound and failed during startup with `listen EINVAL`, before any tests ran. Shortening the disposable profile directory to `ip` allowed the same final artifact's 73/73 integration tests to run successfully. Treat this as test-host setup failure, not an extension test failure; do not change the user's working profile to work around it.
 
 Local package files, extension-host activation and TypeScript-plugin registration are separate evidence. Keep their identities and hashes tied to the reviewed VSIX. Preserve the original extension and the prior scoped settings for rollback. The release process lives in [PRIVATE-RELEASE.md](docs/PRIVATE-RELEASE.md).
+
+## Preserve Marketplace updates when releasing
+
+VS Code's CLI installs a local VSIX with `installGivenVersion: true`, which pins the version and disables
+its automatic updates again. This can override the user's previously enabled choice. Keep the tested
+runtime in use during metadata-only release preparation, then install the published extension by its
+unversioned Gallery ID. Check Gallery source/UUID, the effective update preference and loaded plugin
+separately; do not edit VS Code's private state or treat an installed version number as activation proof.
+
+The fork's main package is a private workspace container, not the extension identity. Release verification
+must read `packages/vscode-extension/package.json`; the shared root version alone is not a Gallery ID.
+The exact package needs its README, changelog and original MIT licence, and its public download must
+match the uploaded bytes after publisher validation and public latest-version visibility both pass.
