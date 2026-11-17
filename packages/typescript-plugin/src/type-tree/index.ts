@@ -30,22 +30,33 @@ export function getTypeInfoAtPosition(
   let nodes = 0;
   let textCharacters = 0;
   const exactOptional = control.compilerOptions?.exactOptionalPropertyTypes === true;
+  // The hovered type always expands: naming rules below only shorten what is nested inside it.
+  let rootType: ts.Type | undefined;
   // Approximate serialized bytes per visited node, so traversal stops with a partial tree
   // before the response-size check below has to discard the whole result.
   const serializedNodeEstimate = 80;
   const responseBudget = limits.characters * 0.9;
 
   function checkBudget(visited: Set<ts.Type>): boolean {
+    if (!canPreprocess()) return false;
+    if (
+      ++nodes > limits.nodes ||
+      visited.size >= limits.depth ||
+      textCharacters + nodes * serializedNodeEstimate >= responseBudget
+    ) {
+      reasons.add("analysis budget");
+      return false;
+    }
+    return true;
+  }
+
+  /** Extraction of existing cancellation/time checks from checkBudget, also bounding new union preprocessing. */
+  function canPreprocess(): boolean {
     if (control.isCancellationRequested?.()) {
       reasons.add("cancelled");
       return false;
     }
-    if (
-      ++nodes > limits.nodes ||
-      visited.size >= limits.depth ||
-      textCharacters + nodes * serializedNodeEstimate >= responseBudget ||
-      Date.now() > deadline
-    ) {
+    if (Date.now() > deadline) {
       reasons.add("analysis budget");
       return false;
     }
@@ -156,12 +167,14 @@ export function getTypeInfoAtPosition(
     });
   }
 
+  /** `omittedProperties` hides members already shown elsewhere, as by Factor Shared Union Properties. */
   function getTypeTree(
     type: ts.Type,
     depth: number,
     visited: Set<ts.Type>,
     annotation?: ts.Node,
     optional = false,
+    omittedProperties?: ReadonlySet<string>,
   ): TypeTree {
     if (!checkBudget(visited)) return { kind: "reference", typeName: "unknown /* expansion limit */" };
     const skippedName = getSkippedTypeName(annotation);
@@ -225,11 +238,17 @@ export function getTypeInfoAtPosition(
     if (apparent.isUnion()) {
       const members = optional ? (optionalMembers(apparent) ?? apparent.types) : apparent.types;
       if (members.length === 1) return getTypeTree(members[0]!, depth, visited);
+      const named = namedUnion(type, members, depth, next, annotation, optional);
+      if (named) return named;
       // Boolean is represented by false | true in larger compiler unions.
-      const sorted = [...members].sort(sortUnionTypes);
-      const types = sorted.slice(0, options.maxUnionMembers).map((member) => getTypeTree(member, depth, next));
-      if (members.length > types.length) reasons.add("union member limit");
-      return { kind: "union", typeName: "", types, excessMembers: Math.max(0, members.length - types.length) };
+      const { entries, wholeEnums } = groupWholeEnums(type, [...members].sort(sortUnionTypes));
+      const factored = wholeEnums.size ? undefined : factorSharedProperties(entries, depth, next);
+      if (factored) return factored;
+      const types = entries
+        .slice(0, options.maxUnionMembers)
+        .map((entry) => (wholeEnums.has(entry) ? reference(entry) : getTypeTree(entry, depth, next)));
+      if (entries.length > types.length) reasons.add("union member limit");
+      return { kind: "union", typeName: "", types, excessMembers: Math.max(0, entries.length - types.length) };
     }
     const parent = type.symbol && enumParent(type.symbol);
     if (type.symbol?.flags & typescript.SymbolFlags.EnumMember && parent) {
@@ -287,6 +306,7 @@ export function getTypeInfoAtPosition(
     )
       return reference(type, true);
     if (options.hidePrivateProperties) members = members.filter(isPublicProperty);
+    if (omittedProperties) members = members.filter((member) => !omittedProperties.has(member.getName()));
     const signatures = [
       ...calls.map((signature) => ({ signature, construct: false })),
       ...constructs.map((signature) => ({ signature, construct: true })),
@@ -325,28 +345,39 @@ export function getTypeInfoAtPosition(
           type: getTypeTree(index.type, depth + 1, next),
         });
       }
+      // Hover previews list two or more proven `never` keys on one line; see groupNeverProperties.
+      const neverProperties: TypeProperty[] = [];
       for (const symbol of members) {
         if (local >= limit || !checkBudget(next)) break;
         local++;
         const optional = !!(symbol.flags & typescript.SymbolFlags.Optional);
-        properties.push({
+        const propertyType = checker.getTypeOfSymbol(symbol);
+        const declaredNever = isDeclaredNever(type, symbol, propertyType);
+        const property: TypeProperty = {
           name: boundedText(isSymbolProperty(symbol) ? checker.symbolToString(symbol) : symbol.getName()),
           computed: isSymbolProperty(symbol),
           optional,
           readonly: isReadOnly(symbol),
-          type: getTypeTree(checker.getTypeOfSymbol(symbol), depth + 1, next, getTypeAnnotation(symbol), optional),
-        });
+          type: declaredNever
+            ? { kind: "primitive", typeName: "never" }
+            : getTypeTree(propertyType, depth + 1, next, getTypeAnnotation(symbol), optional),
+        };
+        properties.push(property);
+        if (declaredNever && !property.readonly && !property.computed) neverProperties.push(property);
       }
       const excessProperties = members.length + indexes.length - properties.length;
       if (excessProperties) reasons.add("property limit");
+      const grouped = groupNeverProperties(neverProperties);
+      const shown = grouped ? properties.filter((property) => !grouped.includes(property)) : properties;
       const kept = signatures.slice(0, options.maxFunctionSignatures);
       const excessSignatures = signatures.length - kept.length;
       if (excessSignatures) reasons.add("function signature limit");
       return {
         kind: "object",
         typeName: "",
-        properties,
+        properties: shown,
         excessProperties,
+        ...(grouped ? { neverProperties: grouped.map((property) => property.name) } : {}),
         ...(signatures.length
           ? {
               signatures: kept.map(({ signature, construct }) => getSignature(signature, depth, next, construct)),
@@ -434,6 +465,291 @@ export function getTypeInfoAtPosition(
         : {}),
       returnType: construct ? reference(returnType) : signatureType(returnType, signature.getDeclaration()?.type),
     };
+  }
+
+  /**
+   * A named union (`AssetSource`, `ExactlyOneOf<[A, B]>`, `AimvsErrorCode`) is shown by name where expanding it would
+   * be incomplete anyway: more members than Max Union Members (`... 80 more`), or unnamed object members already at
+   * Max Depth, which would only show as `{ ... 3 more }`. A complete expansion, such as a short literal union, stays
+   * expanded, and the hovered type itself always expands. This mirrors named objects becoming references at Max Depth.
+   *
+   * Optional properties lose the alias (`AssetSource | undefined` has no alias), so the declared annotation is tried
+   * too. Its name is only used when its members are the very same type objects present here, which proves the name
+   * describes this union rather than an uninstantiated generic or a transformed subset. The output is the name plus
+   * any extra members, so it is never narrower; it must not be wider either. The one tolerated gap is the alias's
+   * `undefined` on an optional property without exactOptionalPropertyTypes, where `?` already means `| undefined`.
+   * Homomorphic mappings keep the source annotation while removing members (`Required<{ x?: Maybe }>`), so a
+   * required property must contain every member of the alias, `undefined` included.
+   */
+  function namedUnion(
+    type: ts.Type,
+    members: readonly ts.Type[],
+    depth: number,
+    visited: Set<ts.Type>,
+    annotation: ts.Node | undefined,
+    optional: boolean,
+  ): TypeTree | undefined {
+    if (type === rootType || !canPreprocess()) return undefined;
+    const declared =
+      type.aliasSymbol || !annotation || !typescript.isTypeNode(annotation)
+        ? type
+        : checker.getTypeFromTypeNode(annotation);
+    if (!declared.aliasSymbol || !declared.isUnion()) return undefined;
+    const present = new Set(members);
+    const impliedUndefined = optional && !exactOptional;
+    if (
+      !declared.types.every(
+        (member) =>
+          canPreprocess() &&
+          (present.has(member) || (impliedUndefined && member.flags & typescript.TypeFlags.Undefined)),
+      )
+    )
+      return undefined;
+    const incomplete =
+      declared.types.length > options.maxUnionMembers ||
+      (depth >= options.maxDepth && declared.types.some(isElidedAtMaxDepth));
+    if (!incomplete) return undefined;
+    const name = reference(declared);
+    const rest = members.filter((member) => !declared.types.includes(member));
+    if (!rest.length) return name;
+    const others = [...rest].sort(sortUnionTypes).map((member) => getTypeTree(member, depth, visited));
+    return { kind: "union", typeName: "", excessMembers: 0, types: [name, ...others] };
+  }
+
+  /** Unnamed object members render as `{ ... N more }` at Max Depth; named ones, arrays and functions stay readable. */
+  function isElidedAtMaxDepth(member: ts.Type): boolean {
+    if (!(member.flags & (typescript.TypeFlags.Object | typescript.TypeFlags.Intersection))) return false;
+    if (member.isIntersection() && member.types.some(isPrimitiveType)) return false;
+    if (member.aliasSymbol || (member.getSymbol() && !member.getSymbol()!.getName().startsWith("__"))) return false;
+    const apparent = checker.getApparentType(member);
+    if (checker.isArrayType(apparent) || checker.isTupleType(apparent)) return false;
+    return apparent.getProperties().length > 0 || checker.getIndexInfosOfType(apparent).length > 0;
+  }
+
+  /**
+   * Whole enums in a union are shown by name (`ImageGenerationModel`) instead of listing every member: enums are
+   * nominal and their own hover lists the members. Identity is checked against the enum's declared type, so a subset
+   * such as `Exclude<Color, Color.Blue>` stays listed member by member. Full copies keep listing members, as before.
+   * The hovered type keeps its members when naming would reduce it to one name (`Color`, `Color | undefined`).
+   * Returns the union entries in display order; `wholeEnums` marks the entries that are enum names.
+   */
+  function groupWholeEnums(type: ts.Type, sorted: ts.Type[]): { entries: ts.Type[]; wholeEnums: Set<ts.Type> } {
+    const wholeEnums = new Set<ts.Type>();
+    if (options.fullExpansion) return { entries: sorted, wholeEnums };
+    const present = new Set(sorted);
+    const enumOfMember = new Map<ts.Type, ts.Type>();
+    const checkedEnums = new Set<ts.Symbol>();
+    for (const member of sorted) {
+      if (!canPreprocess()) return { entries: sorted, wholeEnums: new Set() };
+      if (!(member.flags & typescript.TypeFlags.EnumLiteral) || enumOfMember.has(member)) continue;
+      const parent = member.symbol && enumParent(member.symbol);
+      if (!parent || !(parent.flags & typescript.SymbolFlags.Enum) || checkedEnums.has(parent)) continue;
+      checkedEnums.add(parent);
+      const declared = checker.getDeclaredTypeOfSymbol(parent);
+      const declaredMembers = declared.isUnion() ? declared.types : [declared];
+      // A one-member enum is clearer as its member (`Only.Value`) than as the enum name.
+      if (declaredMembers.length < 2 || !declaredMembers.every((enumMember) => present.has(enumMember))) continue;
+      for (const enumMember of declaredMembers) enumOfMember.set(enumMember, declared);
+    }
+    const entries: ts.Type[] = [];
+    for (const member of sorted) {
+      const declared = enumOfMember.get(member);
+      if (!declared) entries.push(member);
+      else if (!wholeEnums.has(declared)) {
+        wholeEnums.add(declared);
+        entries.push(declared);
+      }
+    }
+    const nullish = typescript.TypeFlags.Undefined | typescript.TypeFlags.Null;
+    if (type === rootType && entries.filter((entry) => !(entry.flags & nullish)).length <= 1)
+      return { entries: sorted, wholeEnums: new Set() };
+    return { entries, wholeEnums };
+  }
+
+  /**
+   * Factor Shared Union Properties (opt-in): properties identical in every member are shown once, as
+   * `{ shared } & ({ a } | { b })`, which is equivalent TypeScript (`S & (A | B)` is `(S & A) | (S & B)`).
+   * A property is shared only when every member has it with the same type object, optionality, readonliness and
+   * proven-`never` status, so discriminants, which differ by definition, always stay in each member. Unions that are
+   * truncated, at Max Depth, or contain anything but plain object members (arrays, functions, index signatures,
+   * skipped or branded types) keep the one-object-per-member form, as do unions with fewer than two shared properties.
+   * Members that reduce to `never` (intersections with conflicting discriminants, as in AIMVS Asset) still render as
+   * `never` but are left out of the comparison: `S & (A | never)` is `S & A`, so they cannot make a property unshared.
+   */
+  function factorSharedProperties(entries: ts.Type[], depth: number, visited: Set<ts.Type>): TypeTree | undefined {
+    if (
+      !options.factorSharedUnionProperties ||
+      entries.length < 2 ||
+      entries.length > options.maxUnionMembers ||
+      depth >= options.maxDepth
+    )
+      return undefined;
+    if (!canPreprocess()) return undefined;
+    const objects = entries.filter((entry) => !isReducedToNever(entry));
+    if (objects.length < 2 || !objects.every((entry) => isPlainObjectMember(entry, visited))) return undefined;
+    const branches = objects.map((entry) => {
+      const apparent = checker.getApparentType(entry);
+      const properties = options.hidePrivateProperties
+        ? apparent.getProperties().filter(isPublicProperty)
+        : apparent.getProperties();
+      return { type: entry, properties: new Map(properties.map((symbol) => [symbol.getName(), symbol])) };
+    });
+    const [first, ...others] = branches;
+    const shared = new Set<string>();
+    for (const [name, symbol] of first!.properties) {
+      if (!canPreprocess()) return undefined;
+      const facts = propertyFacts(first!.type, symbol);
+      const sameEverywhere = others.every((branch) => {
+        if (!canPreprocess()) return false;
+        const other = branch.properties.get(name);
+        if (!other) return false;
+        const otherFacts = propertyFacts(branch.type, other);
+        return (Object.keys(facts) as (keyof typeof facts)[]).every((key) => facts[key] === otherFacts[key]);
+      });
+      if (sameEverywhere) shared.add(name);
+    }
+    if (shared.size < 2) return undefined;
+    const unshared = new Set([...first!.properties.keys()].filter((name) => !shared.has(name)));
+    return {
+      kind: "intersection",
+      typeName: "",
+      types: [
+        getTypeTree(first!.type, depth, visited, undefined, false, unshared),
+        {
+          kind: "union",
+          typeName: "",
+          excessMembers: 0,
+          types: entries.map((entry) => getTypeTree(entry, depth, visited, undefined, false, shared)),
+        },
+      ],
+    };
+  }
+
+  /**
+   * An intersection whose properties conflict reduces to `never` but stays a separate union member. Uses the public
+   * isTypeAssignableTo (TypeScript 5.4+); older compilers report nothing here, so such unions are just not factored.
+   */
+  function isReducedToNever(member: ts.Type): boolean {
+    return (
+      member.isIntersection() &&
+      !checker.getApparentType(member).getProperties().length &&
+      checker.isTypeAssignableTo?.(member, checker.getNeverType()) === true
+    );
+  }
+
+  /** Everything that must match for a property to be shown once for every union member. */
+  function propertyFacts(container: ts.Type, symbol: ts.Symbol) {
+    const type = checker.getTypeOfSymbol(symbol);
+    return {
+      type,
+      optional: !!(symbol.flags & typescript.SymbolFlags.Optional),
+      readonly: isReadOnly(symbol),
+      never: isDeclaredNever(container, symbol, type),
+    };
+  }
+
+  /** An object member that expands to a plain `{ ... }`, so `{ shared } & ({ a } | { b })` keeps its meaning. */
+  function isPlainObjectMember(member: ts.Type, visited: Set<ts.Type>): boolean {
+    if (!(member.flags & (typescript.TypeFlags.Object | typescript.TypeFlags.Intersection))) return false;
+    if (visited.has(member) || (member.isIntersection() && member.types.some(isPrimitiveType))) return false;
+    const names = [
+      member.aliasSymbol?.getName(),
+      member.getSymbol()?.getName(),
+      (member as ts.TypeReference).target?.getSymbol()?.getName(),
+    ];
+    if (
+      names.some(
+        (name) =>
+          name && (options.skippedTypeNames.includes(name) || options.unwrapGenericArgumentsTypeNames.includes(name)),
+      )
+    )
+      return false;
+    const apparent = checker.getApparentType(member);
+    return (
+      !checker.isArrayType(apparent) &&
+      !checker.isTupleType(apparent) &&
+      !apparent.getCallSignatures().length &&
+      !apparent.getConstructSignatures().length &&
+      !checker.getIndexInfosOfType(apparent).length &&
+      apparent.getProperties().length > 0
+    );
+  }
+
+  /**
+   * An optional property whose only allowed state is "absent". The compiler reports `a?: never` as `a?: undefined`,
+   * which hides the author's intent and is wrong under exactOptionalPropertyTypes (explicit `undefined` is rejected).
+   * - With exactOptionalPropertyTypes, the type proves it: only the compiler's "missing" type remains, which is a
+   *   different object from the `undefined` of an explicit `a?: undefined`.
+   * - Without it, `a?: never` and `a?: undefined` both resolve to the same `undefined`, so the declaration must prove
+   *   it: a mapped type with a literal `never` template that supplies the key (`{ [K in Keys]?: never }`, as in
+   *   ExactlyOneOf and AllOrNone helpers), or a `never` annotation declared on this object or one of its bases.
+   * Anything else, such as `Partial<{ a: never }>` (its template is `T[K]`), keeps the earlier `a?: undefined`.
+   * Public compiler API only: the mapped type's own declaration node replaces the internal `symbol.links.mappedType`.
+   */
+  function isDeclaredNever(container: ts.Type, symbol: ts.Symbol, resolved: ts.Type): boolean {
+    if (!(symbol.flags & typescript.SymbolFlags.Optional)) return false;
+    if (!(resolved.flags & typescript.TypeFlags.Undefined) || resolved.isUnion()) return false;
+    if (resolved !== checker.getUndefinedType()) return exactOptional;
+    if (exactOptional) return false;
+    const name = symbol.getName();
+    const parts = container.isIntersection() ? container.types : [container];
+    // An intersection key declared `never` by any part is `never` overall, which matches the resolved `undefined`.
+    return parts.some((part) => !!part.getProperty(name) && (isNeverMappedType(part) || declaresNever(part, name)));
+  }
+
+  function isNeverMappedType(type: ts.Type): boolean {
+    if (!(type.flags & typescript.TypeFlags.Object)) return false;
+    if (!((type as ts.ObjectType).objectFlags & typescript.ObjectFlags.Mapped)) return false;
+    const declaration = type.getSymbol()?.declarations?.[0];
+    return (
+      !!declaration &&
+      typescript.isMappedTypeNode(declaration) &&
+      declaration.type?.kind === typescript.SyntaxKind.NeverKeyword
+    );
+  }
+
+  /**
+   * `a?: never` written directly on this type literal, interface or class, or on one of its base interfaces/classes.
+   * Homomorphic mapped types (`Readonly<T>`, `Pick<T, K>`) reuse the source declarations while changing the type,
+   * so a declaration only counts when its parent is one of this type's own declarations.
+   */
+  function declaresNever(type: ts.Type, name: string): boolean {
+    const declarations = type.getProperty(name)?.declarations;
+    if (!declarations?.length) return false;
+    const owners = new Set<ts.Node>();
+    const pending = [type];
+    const seen = new Set<ts.Type>();
+    while (pending.length && seen.size < 64) {
+      let current = pending.pop()!;
+      if (
+        current.flags & typescript.TypeFlags.Object &&
+        (current as ts.ObjectType).objectFlags & typescript.ObjectFlags.Reference
+      )
+        current = (current as ts.TypeReference).target;
+      if (seen.has(current)) continue;
+      seen.add(current);
+      for (const declaration of current.getSymbol()?.declarations ?? []) owners.add(declaration);
+      if (current.isClassOrInterface()) pending.push(...(checker.getBaseTypes(current) ?? []));
+    }
+    return declarations.every(
+      (declaration) =>
+        (typescript.isPropertySignature(declaration) || typescript.isPropertyDeclaration(declaration)) &&
+        declaration.type?.kind === typescript.SyntaxKind.NeverKeyword &&
+        owners.has(declaration.parent),
+    );
+  }
+
+  /**
+   * Hover previews show two or more proven-`never` keys as one `/* never: a, b *\/` line instead of a line each,
+   * because ExactlyOneOf-style helpers can add many per member. Copies keep each `a?: never` property so pasted
+   * output retains the constraint; a single key also stays a normal property, which is just as short.
+   * Readonly and computed keys stay as properties because the comment cannot show their modifiers or syntax.
+   * Only clients that declare `groupNeverProperties` get the grouped form; an older renderer would drop the keys.
+   */
+  function groupNeverProperties(candidates: TypeProperty[]): TypeProperty[] | undefined {
+    if (!options.groupNeverProperties || candidates.length < 2) return undefined;
+    if (candidates.some((property) => property.name.includes("*/"))) return undefined;
+    return candidates;
   }
 
   /** Destructured parameters are named `__0` by the compiler; show the pattern instead, as TypeScript's hover does. */
@@ -773,6 +1089,7 @@ export function getTypeInfoAtPosition(
       const annotation =
         typeReference ??
         (typescript.isTypeAliasDeclaration(node.parent) ? node.parent.name : getTypeAnnotation(symbol));
+      rootType = type;
       tree = expandFairly(() => getTypeTree(type, 0, new Set(), annotation));
       const declaredParameters =
         declarationNode &&

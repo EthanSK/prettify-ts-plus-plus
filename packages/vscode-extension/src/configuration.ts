@@ -1,20 +1,22 @@
 import * as vscode from "vscode";
-import type { PrettifyOptions } from "@prettify-ts/typescript-plugin/src/request";
+import type { PrettifyOptions } from "@prettify-ts-plus-plus/typescript-plugin/src/request";
 import {
   DEFAULT_OPTIONS,
   DISPLAY_DEFAULTS,
   integerSetting,
   normalizeOptions,
-} from "@prettify-ts/typescript-plugin/src/options";
+} from "@prettify-ts-plus-plus/typescript-plugin/src/options";
 
 export function readSettings(document?: vscode.TextDocument, full = false, copy = false) {
-  const config = vscode.workspace.getConfiguration("prettify-ts", document);
+  const config = vscode.workspace.getConfiguration("prettify-ts-plus-plus", document);
   const options: Partial<PrettifyOptions> = {};
   for (const key of Object.keys(DEFAULT_OPTIONS) as (keyof typeof DEFAULT_OPTIONS)[]) {
     Object.assign(options, { [key]: config.get(key, DEFAULT_OPTIONS[key]) });
   }
   options.fullExpansion = full;
   options.copy = copy || full;
+  // This renderer shows `neverProperties`; the plugin ignores the flag for copies.
+  options.groupNeverProperties = true;
   return {
     config,
     enabled: config.get("enabled", DISPLAY_DEFAULTS.enabled),

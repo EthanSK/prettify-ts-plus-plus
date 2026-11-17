@@ -1,5 +1,9 @@
-import type { TypeFunctionSignature, TypeInfo, TypeTree } from "@prettify-ts/typescript-plugin/src/type-tree/types";
-import { integerSetting } from "@prettify-ts/typescript-plugin/src/options";
+import type {
+  TypeFunctionSignature,
+  TypeInfo,
+  TypeTree,
+} from "@prettify-ts-plus-plus/typescript-plugin/src/type-tree/types";
+import { integerSetting } from "@prettify-ts-plus-plus/typescript-plugin/src/options";
 
 type RenderContext = "type" | "declaration" | "call";
 
@@ -42,6 +46,26 @@ function signatureText(signature: TypeFunctionSignature, context: RenderContext)
     (context === "type" ? " => " : ": ") +
     result
   );
+}
+
+/** Extraction of existing property-key rendering from stringifyTypeTree, now shared with never-key comments.
+ * Canonical numeric keys stay bare (`0: string`); "01" or unsafe integers keep quotes to retain their identity.
+ */
+function propertyKey(name: string, computed?: boolean): string {
+  return computed ||
+    /^[a-zA-Z_$][\w$]*$/.test(name) ||
+    (/^(?:0|[1-9]\d*)$/.test(name) && Number.isSafeInteger(Number(name)))
+    ? name
+    : JSON.stringify(name);
+}
+
+/**
+ * Keys proven to be declared `?: never`, listed once (`/* never: abortCode, restoredCredits *\/`). "never" names
+ * what was written, not compiler policy: without exactOptionalPropertyTypes an explicit `undefined` is still accepted.
+ * Only hover previews group keys (see the plugin's groupNeverProperties); copies keep each `key?: never`.
+ */
+function neverPropertiesComment(names: string[]): string {
+  return "/* never: " + names.map((name) => propertyKey(name)).join(", ") + " */";
 }
 
 /** Same wording as earlier releases (`... 3 more`), inside a comment so copied output stays valid TypeScript. */
@@ -129,28 +153,39 @@ export function stringifyTypeTree(tree: TypeTree, anonymousFunction: boolean | R
         .join(" | ") + omitted(tree.excessMembers, "| ")
     );
   }
+  if (tree.kind === "intersection") {
+    return tree.types
+      .map((member) => {
+        const text = stringifyTypeTree(member);
+        return member.kind === "union" ||
+          (member.kind === "function" && member.signatures.length === 1) ||
+          ((member.kind === "reference" || member.kind === "primitive") && needsGrouping(text, true))
+          ? "(" + text + ")"
+          : text;
+      })
+      .join(" & ");
+  }
   if (tree.kind === "object") {
-    if (!tree.properties.length && !tree.signatures?.length && !tree.excessProperties && !tree.excessSignatures)
+    const never = tree.neverProperties?.length ? [neverPropertiesComment(tree.neverProperties)] : [];
+    if (
+      !tree.properties.length &&
+      !never.length &&
+      !tree.signatures?.length &&
+      !tree.excessProperties &&
+      !tree.excessSignatures
+    )
       return "{}";
     const signatures = (tree.signatures ?? []).map((signature) => signatureText(signature, "call") + ";");
-    const properties = tree.properties.map((property) => {
-      // Canonical numeric keys stay bare (`0: string`); "01" or unsafe integers keep quotes to retain their identity.
-      const name =
-        property.computed ||
-        /^[a-zA-Z_$][\w$]*$/.test(property.name) ||
-        (/^(?:0|[1-9]\d*)$/.test(property.name) && Number.isSafeInteger(Number(property.name)))
-          ? property.name
-          : JSON.stringify(property.name);
-      return (
+    const properties = tree.properties.map(
+      (property) =>
         (property.readonly ? "readonly " : "") +
-        name +
+        propertyKey(property.name, property.computed) +
         (property.optional ? "?" : "") +
         ": " +
         stringifyTypeTree(property.type) +
-        ";"
-      );
-    });
-    const members = [...signatures, ...properties].join(" ");
+        ";",
+    );
+    const members = [...signatures, ...properties, ...never].join(" ");
     const markers = (omitted(tree.excessProperties) + omitted(tree.excessSignatures ?? 0)).trimStart();
     return "{ " + (members && markers ? members + " " + markers : members || markers) + " }";
   }
@@ -163,7 +198,10 @@ export function stringifyTypeTree(tree: TypeTree, anonymousFunction: boolean | R
           let text = stringifyTypeTree(element.type);
           const rest = element.rest ? "..." : "";
           if (element.name) return rest + element.name + (element.optional ? "?" : "") + ": " + text;
-          if (element.optional && (element.type.kind === "union" || element.type.kind === "function"))
+          if (
+            element.optional &&
+            (element.type.kind === "union" || element.type.kind === "intersection" || element.type.kind === "function")
+          )
             text = "(" + text + ")";
           return rest + text + (element.optional ? "?" : "");
         })
@@ -176,6 +214,7 @@ export function stringifyTypeTree(tree: TypeTree, anonymousFunction: boolean | R
     let text = stringifyTypeTree(element);
     if (
       element.kind === "union" ||
+      element.kind === "intersection" ||
       element.kind === "function" ||
       ((element.kind === "array" || element.kind === "tuple") && element.readonly) ||
       ((element.kind === "reference" || element.kind === "primitive") && needsGrouping(text, true))
@@ -323,6 +362,8 @@ export function hoverMarkers(text: string): string {
   for (let index = 0; index < text.length; index++) {
     const character = text[index]!;
     let piece = character;
+    // Other comments, such as `/* never: a, b */`, sit between members and leave `previous` unchanged.
+    let otherComment = false;
     if (["'", '"', "`"].includes(character)) {
       const end = literalEnd(text, index);
       piece = text.slice(index, end);
@@ -335,10 +376,11 @@ export function hoverMarkers(text: string): string {
       if (match?.[1]) piece = "| ... " + match[2] + " more";
       else if (match && previous === "{") piece = "... " + match[2] + " more";
       else if (match && previous === ";") piece = "... " + match[2] + " more;";
+      otherComment = !match;
       index = end - 1;
     }
     result += piece;
-    if (piece.trim()) previous = piece.trimEnd().slice(-1);
+    if (piece.trim() && !otherComment) previous = piece.trimEnd().slice(-1);
   }
   return result;
 }

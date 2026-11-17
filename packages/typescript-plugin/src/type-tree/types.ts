@@ -44,10 +44,17 @@ export type TypeTupleElement = {
  */
 export type TypeTree = { typeName: string } & (
   | { kind: "union"; excessMembers: number; types: TypeTree[] }
+  // Only produced by Factor Shared Union Properties: `{ shared } & ({ a } | { b })`.
+  | { kind: "intersection"; types: TypeTree[] }
   | {
       kind: "object";
       excessProperties: number;
       properties: TypeProperty[];
+      /**
+       * Optional keys proven to be declared `never`, listed once instead of one `key?: never` line each.
+       * Hover previews only: copies keep every key as a property so pasted types retain the constraint.
+       */
+      neverProperties?: string[];
       signatures?: TypeFunctionSignature[];
       excessSignatures?: number;
     }

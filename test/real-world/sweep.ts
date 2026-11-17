@@ -218,7 +218,10 @@ export function sweep(projectDir: string, options: SweepOptions): SweepReport {
   const request = (fileName: string, node: ts.Identifier, mode: Mode, sourceFile: ts.SourceFile) => {
     const limits = mode === "full-copy" ? FULL_COPY_LIMITS : PREVIEW_LIMITS;
     const requestOptions = REQUEST_OPTIONS[mode];
-    const triggerCharacter: PrettifyRequest = { meta: "prettify-type-info-request", options: requestOptions };
+    const triggerCharacter: PrettifyRequest = {
+      meta: "prettify-ts-plus-plus-type-info-request",
+      options: requestOptions,
+    };
     const position = node.getStart(sourceFile) + Math.floor(node.text.length / 2);
     const { line, character } = sourceFile.getLineAndCharacterOfPosition(position);
     const location = `${relative(fileName)}:${line + 1}:${character + 1}`;
@@ -253,7 +256,7 @@ export function sweep(projectDir: string, options: SweepOptions): SweepReport {
       });
     }
 
-    const info = response?.__prettifyResponse;
+    const info = response?.__prettifyPlusPlusResponse;
     if (!info) return;
     stats.responses++;
     for (const reason of info.truncationReasons ?? []) stats.truncation[reason] = (stats.truncation[reason] ?? 0) + 1;

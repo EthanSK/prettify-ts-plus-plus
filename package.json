@@ -1,8 +1,8 @@
 {
-  "name": "prettify-ts-monorepo",
-  "publisher": "MylesMurphy",
+  "name": "prettify-ts-plus-plus-monorepo",
+  "publisher": "EthanSK",
   "license": "MIT",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "private": true,
   "scripts": {
     "preinstall": "only-allow pnpm",
@@ -10,7 +10,7 @@
     "pretest": "tsc --project ./test/tsconfig.json && pnpm build:debug",
     "test": "vscode-test --config ./test/.vscode-test.js",
     "build": "pnpm -r run build",
-    "build:debug": "pnpm --filter @prettify-ts/typescript-plugin build:debug && pnpm --filter prettify-ts run build",
+    "build:debug": "pnpm --filter @prettify-ts-plus-plus/typescript-plugin build:debug && pnpm --filter prettify-ts-plus-plus run build",
     "package": "pnpm build && node ./scripts/package.js",
     "typecheck": "tsc --noEmit -p packages/typescript-plugin && tsc --noEmit -p packages/vscode-extension && tsc --noEmit -p test && tsc --noEmit -p test/unit && tsc --noEmit -p test/real-world",
     "test:unit": "node scripts/test-unit.js",

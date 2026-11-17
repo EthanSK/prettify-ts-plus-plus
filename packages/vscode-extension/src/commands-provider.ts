@@ -42,8 +42,8 @@ export function registerCommands(context: vscode.ExtensionContext, client: TypeC
     );
   }
   for (const [command, full] of [
-    ["prettify-ts.copyPrettifiedType", false],
-    ["prettify-ts.fullCopyPrettifiedType", true],
+    ["prettify-ts-plus-plus.copyPrettifiedType", false],
+    ["prettify-ts-plus-plus.fullCopyPrettifiedType", true],
   ] as const) {
     context.subscriptions.push(
       vscode.commands.registerCommand(command, () =>
@@ -54,5 +54,5 @@ export function registerCommands(context: vscode.ExtensionContext, client: TypeC
       ),
     );
   }
-  context.subscriptions.push(vscode.commands.registerCommand("prettify-ts.toggle", toggleEnabled));
+  context.subscriptions.push(vscode.commands.registerCommand("prettify-ts-plus-plus.toggle", toggleEnabled));
 }

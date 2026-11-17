@@ -25,6 +25,7 @@ export const DEFAULT_OPTIONS: PrettifyOptions = {
   unwrapArrays: true,
   unwrapFunctions: true,
   unwrapGenericArgumentsTypeNames: ["Promise", "Set", "Map", "Observable"],
+  factorSharedUnionProperties: false,
 };
 
 export const DISPLAY_DEFAULTS = { enabled: true, typeIndentation: 4, maxCharacters: 20000 };
@@ -55,7 +56,13 @@ export function integerSetting(value: unknown, fallback: number, minimum: number
 export function normalizeOptions(input: Partial<PrettifyOptions> = {}): PrettifyOptions {
   if (!input || typeof input !== "object" || Array.isArray(input)) input = {};
   const result = { ...DEFAULT_OPTIONS };
-  for (const key of ["hidePrivateProperties", "treatUnderscoreAsPrivate", "unwrapArrays", "unwrapFunctions"] as const) {
+  for (const key of [
+    "hidePrivateProperties",
+    "treatUnderscoreAsPrivate",
+    "unwrapArrays",
+    "unwrapFunctions",
+    "factorSharedUnionProperties",
+  ] as const) {
     if (typeof input[key] === "boolean") result[key] = input[key];
   }
   for (const key of [
@@ -75,6 +82,7 @@ export function normalizeOptions(input: Partial<PrettifyOptions> = {}): Prettify
   }
   result.fullExpansion = input.fullExpansion === true;
   result.copy = input.copy === true || result.fullExpansion;
+  result.groupNeverProperties = input.groupNeverProperties === true && !result.copy;
   if (result.fullExpansion) {
     result.maxDepth = MAX_SETTING;
     result.maxProperties = MAX_SETTING;

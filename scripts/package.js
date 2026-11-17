@@ -1,3 +1,5 @@
+// Build one installable VSIX from the canonical root README/license and the extension/plugin source.
+// Run directly with an optional output path; temporary staging is removed even when packaging fails.
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
@@ -10,11 +12,15 @@ const plugin = path.join(root, "packages/typescript-plugin");
 async function packageExtension(outputPath) {
   const stage = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "prettify-ts-package-")));
   try {
-    for (const name of ["README.md", "LICENSE", ".vscodeignore", "assets"]) {
+    for (const name of ["README.md", "LICENSE"]) {
+      await fs.cp(path.join(root, name), path.join(stage, name));
+    }
+    for (const name of [".vscodeignore", "assets"]) {
       await fs.cp(path.join(extension, name), path.join(stage, name), { recursive: true });
     }
     const manifest = JSON.parse(await fs.readFile(path.join(extension, "package.json"), "utf8"));
-    manifest.dependencies = { "@prettify-ts/typescript-plugin": manifest.version };
+    const pluginManifest = JSON.parse(await fs.readFile(path.join(plugin, "package.json"), "utf8"));
+    manifest.dependencies = { [pluginManifest.name]: pluginManifest.version };
     delete manifest.devDependencies;
     delete manifest.scripts;
     await fs.writeFile(path.join(stage, "package.json"), JSON.stringify(manifest, null, 2));
@@ -27,9 +33,8 @@ async function packageExtension(outputPath) {
       external: ["vscode"],
       outfile: path.join(stage, "out/extension.js"),
     });
-    const pluginStage = path.join(stage, "node_modules/@prettify-ts/typescript-plugin");
+    const pluginStage = path.join(stage, "node_modules", pluginManifest.name);
     await fs.mkdir(pluginStage, { recursive: true });
-    const pluginManifest = JSON.parse(await fs.readFile(path.join(plugin, "package.json"), "utf8"));
     delete pluginManifest.devDependencies;
     delete pluginManifest.scripts;
     await fs.writeFile(path.join(pluginStage, "package.json"), JSON.stringify(pluginManifest, null, 2));
@@ -46,6 +51,7 @@ async function packageExtension(outputPath) {
     const destination = path.resolve(
       outputPath ?? path.join(extension, manifest.name + "-" + manifest.version + ".vsix"),
     );
+    await fs.mkdir(path.dirname(destination), { recursive: true });
     await vsce.createVSIX({ cwd: stage, packagePath: destination, dependencies: true });
     return destination;
   } finally {

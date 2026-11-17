@@ -54,7 +54,7 @@ module.exports = defineConfig(
               const manifestPath = path.join(directory, "package.json");
               if (!fs.existsSync(manifestPath)) return false;
               const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-              return manifest.publisher === "MylesMurphy" && manifest.name === "prettify-ts";
+              return manifest.publisher === "EthanSK" && manifest.name === "prettify-ts-plus-plus";
             })
         : undefined;
     if (process.env.PRETTIFY_TEST_PACKAGED === "1" && !installed) throw new Error("Installed test artifact not found");

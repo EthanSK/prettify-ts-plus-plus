@@ -108,7 +108,7 @@ suite("Private and underscore member filtering (#38)", () => {
     assert.ok(!expandedHover.includes("privateAccessor:"), expandedHover);
   });
 
-  for (const command of ["prettify-ts.copyPrettifiedType", "prettify-ts.fullCopyPrettifiedType"]) {
+  for (const command of ["prettify-ts-plus-plus.copyPrettifiedType", "prettify-ts-plus-plus.fullCopyPrettifiedType"]) {
     test(`${command} respects underscore and private settings`, async () => {
       const originalClipboard = await vscode.env.clipboard.readText();
       const document = getOpenDocument();

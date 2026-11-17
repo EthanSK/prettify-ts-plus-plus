@@ -1,11 +1,7 @@
 name: CI
 
+# Private development: run explicitly; do not inherit upstream's full automatic editor matrix.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -40,8 +36,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      PRETTIFY_TEST_VSCODE_VERSION: '1.100.0'
-      PRETTIFY_TEST_VUE_EXTENSION_VERSION: '3.1.1'
+      PRETTIFY_TEST_VSCODE_VERSION: "1.100.0"
+      PRETTIFY_TEST_VUE_EXTENSION_VERSION: "3.1.1"
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -58,8 +54,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      PRETTIFY_TEST_VSCODE_VERSION: '1.100.0'
-      PRETTIFY_TEST_VUE_EXTENSION_VERSION: '3.1.1'
+      PRETTIFY_TEST_VSCODE_VERSION: "1.100.0"
+      PRETTIFY_TEST_VUE_EXTENSION_VERSION: "3.1.1"
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -82,7 +78,7 @@ jobs:
     env:
       PRETTIFY_TEST_VSCODE_VERSION: stable
       PRETTIFY_TEST_VUE_EXTENSION_VERSION: latest
-      PRETTIFY_TEST_USE_WORKSPACE_TYPESCRIPT: '1'
+      PRETTIFY_TEST_USE_WORKSPACE_TYPESCRIPT: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -99,8 +95,8 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     env:
-      PRETTIFY_TEST_VSCODE_VERSION: '1.100.0'
-      PRETTIFY_TEST_VUE_EXTENSION_VERSION: '3.1.1'
+      PRETTIFY_TEST_VSCODE_VERSION: "1.100.0"
+      PRETTIFY_TEST_VUE_EXTENSION_VERSION: "3.1.1"
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6

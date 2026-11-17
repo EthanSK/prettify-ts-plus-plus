@@ -1,112 +1,54 @@
-# Prettify TypeScript
+# Prettify TypeScript++
 
-**Get useful type information where you need it**
+A private fork of [Prettify TypeScript](https://github.com/mylesmmurphy/prettify-ts) for clearer complex-type hovers in VS Code.
 
-[![Installs](https://badgen.net/vs-marketplace/i/MylesMurphy.prettify-ts)](https://marketplace.visualstudio.com/items?itemName=MylesMurphy.prettify-ts)
-[![GitHub Repo stars](https://badgen.net/github/stars/mylesmmurphy/prettify-ts)](https://github.com/mylesmmurphy/prettify-ts)
-[![Version](https://badgen.net/vs-marketplace/v/MylesMurphy.prettify-ts)](https://marketplace.visualstudio.com/items?itemName=MylesMurphy.prettify-ts)
-[![CI](https://github.com/mylesmmurphy/prettify-ts/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mylesmmurphy/prettify-ts/actions/workflows/ci.yml)
-[![License](https://badgen.net/static/license/MIT/blue)](https://github.com/mylesmmurphy/prettify-ts/blob/main/LICENSE)
+The goal is to make large unions readable while keeping the compiler’s meaning intact. Keep useful enum and union names, make excluded fields clear, and optionally show shared fields once rather than repeating them in every branch. Root types still expand so hovering an alias shows its definition.
 
-Prettify TS is a Visual Studio Code extension that enhances your TypeScript development experience. It provides hover information for TypeScript types, classes, interfaces, and more, formatted in a more readable and configurable way.
+This is a development candidate, not a public Marketplace release. See [the private release process](docs/PRIVATE-RELEASE.md) for installation, validation and later publication.
 
+## What the fork checks
 
-## Installation
+- Whole enums versus individual enum members and subsets.
+- Optional `never` versus explicit `undefined`, with `exactOptionalPropertyTypes` enabled and disabled.
+- `ExactlyOneOf`, `AllOrNone`, discriminated unions and intersections.
+- Generic, mapped, conditional, indexed and recursive types.
+- Readonly and optional fields, callable objects, tuples and index signatures.
+- Hover limits, cancellation, settings, and both Copy commands.
 
-Install via the VSCode Marketplace:
+A compact hover is a presentation, not a new type system. The compiler remains responsible for accepted values. Copied output must keep actual constraints, even when a hover groups their explanation.
 
-* [Prettify TS on VSCode Marketplace](https://marketplace.visualstudio.com/items?itemName=MylesMurphy.prettify-ts)
-* [Prettify TS on Open VSX](https://open-vsx.org/extension/MylesMurphy/prettify-ts)
+## Build
 
+Use Node 24 and the pnpm version declared in `package.json`.
 
-## Developer Notes
-
-This README is for developing Prettify TS. The extension README (shown on the Marketplace) is [here](./packages/vscode-extension/README.md).
-
-
-## Scripts
-
-Use Node.js 24 (`nvm use`) and the pnpm version pinned in `package.json`. Enable Corepack with `corepack enable`, or [install the pinned pnpm version](https://pnpm.io/installation).
-
-TypeScript is kept on the 5.9 line while the language service plugin relies on the JavaScript compiler API. New compiler major versions require a separate compatibility review.
-
-```bash
-pnpm install      # Installs all dependencies
-pnpm typecheck    # Checks the plugin, extension, and test types
-pnpm lint         # Checks code style and lint rules
-pnpm test         # Builds and runs the extension test suite
-pnpm build        # Compiles the codebase
-pnpm package      # Builds + prepares the VSIX package for publishing
+```sh
+pnpm install --frozen-lockfile
+pnpm build
+node scripts/package.js /absolute/output/prettify-ts-plus-plus.vsix
 ```
 
-You do **not** need to build manually — `test` and `package` handles build steps automatically.
+Install the exact reviewed package with VS Code’s **Install from VSIX** command or its `code --install-extension /absolute/output/prettify-ts-plus-plus.vsix` CLI. Enable only the intended hover extension to avoid duplicate prettified previews. Keep the upstream extension available for rollback.
 
+A package installed on disk can differ from the code loaded in an existing editor window. Verify activation separately and preserve live editor work before any extension-host restart.
 
-## Testing
+## Shared fields
 
-The full integration test suite lives in `test/`. For more info on the test layout, debugging instructions, and hover validation strategy, see the [Test README](./test/README.md).
+Enable `prettify-ts-plus-plus.factorSharedUnionProperties` to show fields shared by every union branch once, followed by the branch differences. It is off by default; readonly, optionality, resolved types and exclusions must match before a field can be shared.
 
+Enum names and proven optional-`never` fields are clearer automatically. Hover summaries can group several excluded fields in a `/* never: ... */` comment; both Copy commands keep real property declarations. Without `exactOptionalPropertyTypes`, an optional `never` field can still explicitly contain `undefined`, just as in the original source.
 
-## Monorepo Structure
+## Checks
 
-This repo uses [pnpm workspaces](https://pnpm.io/workspaces) to manage multiple packages:
-
-```
-.
-├── packages/
-│   ├── typescript-plugin/     # TypeScript language service plugin
-│   └── vscode-extension/      # VSCode extension host + UI
-└── test/                      # Full integration test suite
-└── scripts/                   # Utility scripts for development, building, or CI
+```sh
+pnpm typecheck
+pnpm lint
+pnpm test:unit
 ```
 
+The [editor test guide](test/README.md) covers real provider, language and packaging checks. Run editor hosts in an isolated profile on a separate test machine rather than the working editor. Compiler-only checks do not prove visual hover quality.
 
-### Development Workflow
+## Upstream and license
 
-During development, pnpm automatically symlinks the plugin into the extension’s `node_modules` for live debugging.
+Forked from v1.0.2 (`83c6cc8b1e05d116f542924a842395fd37238c34`), with upstream history retained. Original copyright: Myles Murphy. [MIT license](LICENSE).
 
-
-### Packaging Workflow
-
-Run pnpm package to build a VSIX. Packaging stages the manifest, bundle, assets, and plugin in a temporary directory and removes that directory on success or failure. It never rewrites the checkout manifest or replaces workspace dependency symlinks.
-
-Run pnpm test:package to install the generated VSIX in an isolated editor profile and run the integration suite against the installed extension. Tests use a disposable copy of the workspace fixtures. Pass a path (`node scripts/test-package.js path/to/file.vsix`) to test an existing VSIX instead of packaging a new one.
-
-### Release Workflow
-
-Pushing a `v*` tag runs [`.github/workflows/release.yml`](./.github/workflows/release.yml). It fails if the tag does not match the version in `packages/vscode-extension/package.json`, runs the CI checks, builds the VSIX once, runs the installed-VSIX tests against that file, and uploads it as an artifact. The [real-world sweep](./test/README.md#real-world-suite-optional) runs in parallel and must also pass. After approval, the `publish` job publishes that same artifact to the VS Code Marketplace and Open VSX, then creates a GitHub release with the VSIX attached.
-
-To release:
-
-1. Bump `version` in `packages/vscode-extension/package.json` (and the plugin package if it changed), then merge to `main`.
-2. Tag the release commit and push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-3. When the `verify` and `real-world` jobs pass, approve the `release` environment deployment in the workflow run.
-
-One-time setup:
-
-1. Create a `release` environment (Settings → Environments) with required reviewers. Optionally restrict it to `v*` tags.
-2. **VS Code Marketplace:** in an Azure DevOps organization, create a personal access token with organization **All accessible organizations** and scope **Marketplace → Manage**, for an account with access to the `MylesMurphy` publisher. Add it as the secret `VSCE_PAT` on the `release` environment, so only the publish job can read it. Azure DevOps retires these global tokens on December 1, 2026; the Marketplace's own trusted publishing (`vsce publish --oidc`) is not available yet.
-3. **Open VSX:** no token is stored. As the `MylesMurphy` namespace owner, register a [trusted publisher](https://open-vsx.org/user-settings/trusted-publishers) for `prettify-ts` with provider GitHub Actions, owner `mylesmmurphy`, repository `prettify-ts`, workflow `release.yml` and environment `release`. The publish job exchanges its GitHub OIDC token for a short-lived token scoped to the extension. Do not add an `OVSX_PAT` secret.
-
-Both publish steps pass `--skip-duplicate`, so after a partial failure re-run the failed `publish` job.
-
-### Correctness and compatibility
-
-The minimum supported editor is VS Code 1.100.0. CI exercises that editor with Vue - Official 3.1.1 and its bundled compiler, plus the current editor/Vue with workspace TypeScript. Compiler-backed regression tests also cover type equivalence, mapped modifiers, generic signatures, cancellation, bounded recursive expansion, and packaging failure cleanup.
-
-Run pnpm test:unit for the compiler and client regression suite. See [the audit coverage checklist](./docs/audit-fixes.md) for the issues covered by this change.
-
-## VSCode Debug Configs
-
-Defined in `.vscode/launch.json`:
-
-* **Run Extension**: Launches VSCode with the extension loaded for manual debugging
-* **Attach to TSServer**: Debug the TypeScript language service plugin
-
-Use the VSCode Run panel (Ctrl+Shift+D / Cmd+Shift+D) to start these sessions.
-
-## License
-
-[MIT](./LICENSE)
-
-Happy coding!
+The fork’s own extension, plugin, settings, commands and request metadata are isolated from upstream. It uses the existing TypeScript server plugin architecture and targets TypeScript 5.9 and 6.0. Current TypeScript 7 native-preview releases do not run this plugin; upstream has an experimental migration in progress.

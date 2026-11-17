@@ -4,7 +4,10 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 test("a failed packaging attempt removes staging and preserves manifest and workspace symlink", async () => {
   const manifest = path.resolve(__dirname, "../../packages/vscode-extension/package.json");
-  const plugin = path.resolve(__dirname, "../../packages/vscode-extension/node_modules/@prettify-ts/typescript-plugin");
+  const plugin = path.resolve(
+    __dirname,
+    "../../packages/vscode-extension/node_modules/@prettify-ts-plus-plus/typescript-plugin",
+  );
   const original = await fs.readFile(manifest, "utf8");
   const link = await fs.readlink(plugin);
   const vsce = require("../../packages/vscode-extension/node_modules/@vscode/vsce");

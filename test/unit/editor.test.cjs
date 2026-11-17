@@ -9,7 +9,7 @@ const mock = {
   ProgressLocation: { Notification: 15 },
   workspace: {
     getConfiguration(section, scope) {
-      assert.equal(section, "prettify-ts");
+      assert.equal(section, "prettify-ts-plus-plus");
       return {
         get(key, fallback) {
           return values[key] ?? fallback;
@@ -104,7 +104,7 @@ beforeEach(() => {
   token.isCancellationRequested = false;
   document.version = 1;
   handler = async (command, method) =>
-    method === "completionInfo" ? { body: { __prettifyResponse: info } } : undefined;
+    method === "completionInfo" ? { body: { __prettifyPlusPlusResponse: info } } : undefined;
 });
 function client() {
   return api.createTypeClient({ subscriptions: [] });
@@ -114,7 +114,7 @@ test("requests preserve URI and cancellation token", async () => {
     assert.equal(args.file, document.uri);
     assert.equal(config.executionTarget, 0);
     assert.equal(cancellation, token);
-    return { body: { __prettifyResponse: info } };
+    return { body: { __prettifyPlusPlusResponse: info } };
   };
   assert.equal(await client().request(document, { line: 0, character: 1 }, {}, token), info);
 });
@@ -125,7 +125,7 @@ test("cancelled and outdated requests do not produce results", async () => {
   token.isCancellationRequested = false;
   handler = async () => {
     document.version++;
-    return { body: { __prettifyResponse: info } };
+    return { body: { __prettifyPlusPlusResponse: info } };
   };
   assert.equal(await c.request(document, { line: 0, character: 1 }, {}, token), undefined);
 });
@@ -136,7 +136,7 @@ test("missing or failed quickinfo preserves valid hover and logs failures", asyn
   assert.match(hover.contents.value, /value: string/);
   handler = async (command, method) => {
     if (method === "quickinfo") throw new Error("No quickinfo");
-    return { body: { __prettifyResponse: info } };
+    return { body: { __prettifyPlusPlusResponse: info } };
   };
   hover = await providers.get("typescript").provideHover(document, { line: 0, character: 1 }, token);
   assert.match(hover.contents.value, /value: string/);
@@ -159,12 +159,12 @@ test("copies ignore Max Characters as before; full copy expands everything and p
   const seen = [];
   handler = async (command, method, args) => {
     seen.push(args.triggerCharacter.options);
-    return { body: { __prettifyResponse: info } };
+    return { body: { __prettifyPlusPlusResponse: info } };
   };
   api.registerCommands({ subscriptions: [] }, client());
-  await commands.get("prettify-ts.copyPrettifiedType")();
+  await commands.get("prettify-ts-plus-plus.copyPrettifiedType")();
   assert.equal(clipboard, "type Test = {\n    value: string;\n}\n");
-  await commands.get("prettify-ts.fullCopyPrettifiedType")();
+  await commands.get("prettify-ts-plus-plus.fullCopyPrettifiedType")();
   assert.match(clipboard, /value: string/);
   assert.equal(seen[0].copy, true);
   assert.equal(seen[0].fullExpansion, false);
@@ -190,13 +190,13 @@ test("hover shows earlier markers and hides duplicates of TypeScript's own hover
   };
   handler = async (command, method) =>
     method === "completionInfo"
-      ? { body: { __prettifyResponse: collapsed } }
+      ? { body: { __prettifyPlusPlusResponse: collapsed } }
       : { body: { displayString: "type Test = Other" } };
   let hover = await providers.get("typescript").provideHover(document, { line: 0, character: 1 }, token);
   assert.equal(hover.contents.value, "type Test = {\n    nested: { ... 2 more };\n}\n");
   handler = async (command, method) =>
     method === "completionInfo"
-      ? { body: { __prettifyResponse: info } }
+      ? { body: { __prettifyPlusPlusResponse: info } }
       : { body: { displayString: "type Test = {\n  value: string;\n}" } };
   hover = await providers.get("typescript").provideHover(document, { line: 0, character: 1 }, token);
   assert.equal(hover, undefined);
@@ -209,7 +209,7 @@ test("inline presentation limits do not add hover footers; invisible safety limi
   ]) {
     handler = async (command, method) =>
       method === "completionInfo"
-        ? { body: { __prettifyResponse: { ...info, truncationReasons: reasons } } }
+        ? { body: { __prettifyPlusPlusResponse: { ...info, truncationReasons: reasons } } }
         : undefined;
     const hover = await providers.get("typescript").provideHover(document, { line: 0, character: 1 }, token);
     assert.equal(/Expansion limited/.test(hover.contents.value), footer, reasons.join());

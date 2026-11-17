@@ -1,12 +1,12 @@
 import * as vscode from "vscode";
-import type { PrettifyOptions, PrettifyRequest } from "@prettify-ts/typescript-plugin/src/request";
-import type { TypeInfo } from "@prettify-ts/typescript-plugin/src/type-tree/types";
+import type { PrettifyOptions, PrettifyRequest } from "@prettify-ts-plus-plus/typescript-plugin/src/request";
+import type { TypeInfo } from "@prettify-ts-plus-plus/typescript-plugin/src/type-tree/types";
 
 export const supportedLanguages = ["typescript", "typescriptreact", "javascript", "javascriptreact", "vue"];
 export type TypeClient = ReturnType<typeof createTypeClient>;
 
 export function createTypeClient(context: vscode.ExtensionContext) {
-  const output = vscode.window.createOutputChannel("Prettify TS");
+  const output = vscode.window.createOutputChannel("Prettify TypeScript++");
   context.subscriptions.push(output);
   function log(error: unknown) {
     output.appendLine(String(error));
@@ -24,9 +24,9 @@ export function createTypeClient(context: vscode.ExtensionContext) {
     ): Promise<TypeInfo | undefined> {
       if (token?.isCancellationRequested) return;
       const version = document.version;
-      const request: PrettifyRequest = { meta: "prettify-type-info-request", options };
+      const request: PrettifyRequest = { meta: "prettify-ts-plus-plus-type-info-request", options };
       try {
-        const response = await vscode.commands.executeCommand<{ body?: { __prettifyResponse?: TypeInfo } }>(
+        const response = await vscode.commands.executeCommand<{ body?: { __prettifyPlusPlusResponse?: TypeInfo } }>(
           "typescript.tsserverRequest",
           "completionInfo",
           { ...location(document, position), triggerCharacter: request },
@@ -34,7 +34,7 @@ export function createTypeClient(context: vscode.ExtensionContext) {
           token,
         );
         if (token?.isCancellationRequested || document.version !== version) return;
-        const info = response?.body?.__prettifyResponse;
+        const info = response?.body?.__prettifyPlusPlusResponse;
         if (info && typeof info.declaration === "string" && typeof info.name === "string" && info.typeTree) return info;
       } catch (error) {
         if (!token?.isCancellationRequested) log(error);

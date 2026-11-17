@@ -289,7 +289,7 @@ test("manifest defaults agree with shared options", () => {
   const manifest = require("../../packages/vscode-extension/package.json"),
     properties = manifest.contributes.configuration.properties;
   for (const [key, value] of Object.entries(api.DEFAULT_OPTIONS))
-    assert.deepEqual(properties["prettify-ts." + key].default, value, key);
+    assert.deepEqual(properties["prettify-ts-plus-plus." + key].default, value, key);
   for (const v of Object.values(properties)) {
     if (v.type === "integer") assert.ok(v.maximum !== undefined);
     assert.equal(v.scope, "language-overridable");

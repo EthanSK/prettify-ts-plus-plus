@@ -4,21 +4,15 @@
     "noEmit": true,
     "target": "es2017",
     "module": "commonjs",
+    "jsx": "preserve",
     "sourceMap": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "strict": true,
     "skipLibCheck": true,
     "strictNullChecks": true,
-    "noUncheckedIndexedAccess": true,
+    "noUncheckedIndexedAccess": true
   },
-  "include": [
-    "**/*.js",
-    "**/*.jsx",
-    "**/*.ts",
-    "**/*.d.ts",
-    "**/*.tsx",
-    "**/*.vue"
-  ],
+  "include": ["**/*.js", "**/*.jsx", "**/*.ts", "**/*.d.ts", "**/*.tsx", "**/*.vue"],
   "exclude": ["node_modules"]
 }

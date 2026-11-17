@@ -8,12 +8,12 @@ suite("Editor commands and unsaved documents", () => {
   teardown(async () => applySettings());
 
   test("toggle updates an effective workspace override", async () => {
-    const config = vscode.workspace.getConfiguration("prettify-ts");
+    const config = vscode.workspace.getConfiguration("prettify-ts-plus-plus");
     await config.update("enabled", false, vscode.ConfigurationTarget.Workspace);
-    await vscode.commands.executeCommand("prettify-ts.toggle", true);
-    assert.strictEqual(vscode.workspace.getConfiguration("prettify-ts").get("enabled"), true);
-    await vscode.commands.executeCommand("prettify-ts.toggle");
-    assert.strictEqual(vscode.workspace.getConfiguration("prettify-ts").get("enabled"), false);
+    await vscode.commands.executeCommand("prettify-ts-plus-plus.toggle", true);
+    assert.strictEqual(vscode.workspace.getConfiguration("prettify-ts-plus-plus").get("enabled"), true);
+    await vscode.commands.executeCommand("prettify-ts-plus-plus.toggle");
+    assert.strictEqual(vscode.workspace.getConfiguration("prettify-ts-plus-plus").get("enabled"), false);
   });
 
   test("untitled documents provide expanded hover and copied function types", async () => {
@@ -43,7 +43,7 @@ suite("Editor commands and unsaved documents", () => {
     editor.selection = new vscode.Selection(callback, callback);
     const original = await vscode.env.clipboard.readText();
     try {
-      await vscode.commands.executeCommand("prettify-ts.copyPrettifiedType");
+      await vscode.commands.executeCommand("prettify-ts-plus-plus.copyPrettifiedType");
       assert.match(await vscode.env.clipboard.readText(), /type Callback = <T>\(value: T\) => T/);
     } finally {
       await vscode.env.clipboard.writeText(original);

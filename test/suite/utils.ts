@@ -26,7 +26,7 @@ export async function openDocument(fileName: string): Promise<void> {
 /** Wait for the plugin itself, so native hover cannot hide an initialization failure. */
 export async function ensureTypeScriptServerReady(fileName: string, keyword: string): Promise<void> {
   await openDocument(fileName);
-  const extension = vscode.extensions.getExtension("MylesMurphy.prettify-ts");
+  const extension = vscode.extensions.getExtension("EthanSK.prettify-ts-plus-plus");
   assert.ok(extension, "Extension not found");
   await extension.activate();
   for (let attempt = 0; attempt < 60; attempt++) {
@@ -65,7 +65,7 @@ type PrettifySettings = {
  * If a setting is not provided, it will use the default value.
  */
 export async function applySettings(overrides: PrettifySettings = {}) {
-  const config = vscode.workspace.getConfiguration("prettify-ts");
+  const config = vscode.workspace.getConfiguration("prettify-ts-plus-plus");
 
   // Read the contributed defaults so fresh-install behavior and tests cannot drift.
   const manifest = JSON.parse(
@@ -77,7 +77,7 @@ export async function applySettings(overrides: PrettifySettings = {}) {
   };
   const defaults = Object.fromEntries(
     Object.entries(manifest.contributes.configuration.properties).map(([key, value]) => [
-      key.replace("prettify-ts.", ""),
+      key.replace("prettify-ts-plus-plus.", ""),
       value.default,
     ]),
   ) as Required<PrettifySettings>;
@@ -177,7 +177,7 @@ export async function getPrettifyTypeInfo(
   assert.ok(offset >= 0, `Fixture keyword not found: ${keyword}`);
   const position = openDoc.positionAt(offset + characterOffset);
   const response = await vscode.commands.executeCommand<{
-    body?: { __prettifyResponse?: TypeInfo };
+    body?: { __prettifyPlusPlusResponse?: TypeInfo };
   }>(
     "typescript.tsserverRequest",
     "completionInfo",
@@ -186,7 +186,7 @@ export async function getPrettifyTypeInfo(
       line: position.line + 1,
       offset: position.character + 1,
       triggerCharacter: {
-        meta: "prettify-type-info-request",
+        meta: "prettify-ts-plus-plus-type-info-request",
         options: {
           hidePrivateProperties: true,
           maxDepth: 3,
@@ -204,7 +204,7 @@ export async function getPrettifyTypeInfo(
     },
     { executionTarget: 0 },
   );
-  const info = response?.body?.__prettifyResponse;
+  const info = response?.body?.__prettifyPlusPlusResponse;
   assert.ok(info, "Expected a response from the Prettify TypeScript plugin");
   if (process.env.PRETTIFY_TEST_USE_WORKSPACE_TYPESCRIPT === "1") {
     assert.match(info.compilerVersion ?? "", /^5[.]9[.]/, "Expected the workspace TypeScript compiler");
@@ -214,7 +214,7 @@ export async function getPrettifyTypeInfo(
 
 /** Render the direct plugin response using the extension's built formatter. */
 export async function renderPrettifiedType(keyword: string, characterOffset = 1): Promise<string> {
-  const config = vscode.workspace.getConfiguration("prettify-ts");
+  const config = vscode.workspace.getConfiguration("prettify-ts-plus-plus");
   const overrides: PrettifySettings = {};
   for (const key of [
     "hidePrivateProperties",

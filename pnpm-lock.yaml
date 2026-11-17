@@ -78,7 +78,7 @@ importers:
 
   packages/vscode-extension:
     dependencies:
-      '@prettify-ts/typescript-plugin':
+      '@prettify-ts-plus-plus/typescript-plugin':
         specifier: workspace:*
         version: link:../typescript-plugin
     devDependencies:

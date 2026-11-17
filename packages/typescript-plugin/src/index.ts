@@ -62,7 +62,7 @@ function init(modules: { typescript: typeof ts }): ts.server.PluginModule {
         isNewIdentifierLocation: false,
         entries: [],
         // Add metadata to the response
-        __prettifyResponse: prettifyResponse,
+        __prettifyPlusPlusResponse: prettifyResponse,
       };
 
       return response;

@@ -1,3 +1,5 @@
+// Prettify TypeScript++ was previously Prettify TypeScript (prettify-ts, by Myles Murphy).
+// Its request and response names are isolated so an installed upstream plugin cannot answer the fork's requests.
 import type * as ts from "typescript";
 
 import type { TypeInfo } from "./type-tree/types";
@@ -19,6 +21,13 @@ export type PrettifyOptions = {
    * their arguments, so pasted output stays valid TypeScript. Always set with fullExpansion.
    */
   copy?: boolean;
+
+  /**
+   * The client renders `neverProperties` (`/* never: a, b *\/`), so two or more proven `?: never` keys may share one
+   * line. Clients that predate it would silently drop those keys, so the plugin groups them only when asked; otherwise
+   * every key stays a `key?: never` property. Never applies to copies.
+   */
+  groupNeverProperties?: boolean;
 
   /**
    * Treat underscore-prefixed members as private when hiding private properties.
@@ -73,6 +82,13 @@ export type PrettifyOptions = {
    * List of generic type names whose arguments should be displayed as-is, rather than resolving to their apparent (final) type.
    */
   unwrapGenericArgumentsTypeNames: string[];
+
+  /**
+   * Show properties that are identical in every member of an object union once, as `Shared & (A | B)`.
+   * Opt-in: the result is equivalent TypeScript, but it reshapes the familiar one-object-per-member layout.
+   * Defaults to false when omitted, so older clients keep the earlier output.
+   */
+  factorSharedUnionProperties: boolean;
 };
 
 /**
@@ -80,7 +96,7 @@ export type PrettifyOptions = {
  * This request is sent when the user triggers a type information request with a specific character.
  */
 export type PrettifyRequest = {
-  meta: "prettify-type-info-request";
+  meta: "prettify-ts-plus-plus-type-info-request";
   options: PrettifyOptions;
 };
 
@@ -93,7 +109,7 @@ export type PrettifyCompletionsTriggerCharacter = PrettifyRequest | ts.Completio
  * Response format for prettified type information.
  */
 export type PrettifyResponse = ts.WithMetadata<ts.CompletionInfo> & {
-  __prettifyResponse?: TypeInfo;
+  __prettifyPlusPlusResponse?: TypeInfo;
 };
 
 /**
@@ -101,6 +117,9 @@ export type PrettifyResponse = ts.WithMetadata<ts.CompletionInfo> & {
  */
 export function isPrettifyRequest(request: PrettifyCompletionsTriggerCharacter): request is PrettifyRequest {
   return (
-    !!request && typeof request === "object" && "meta" in request && request["meta"] === "prettify-type-info-request"
+    !!request &&
+    typeof request === "object" &&
+    "meta" in request &&
+    request["meta"] === "prettify-ts-plus-plus-type-info-request"
   );
 }

@@ -29,18 +29,18 @@ async function hoverText(document: vscode.TextDocument, position: vscode.Positio
 
 /** The Prettify response itself, so TypeScript's native hover cannot hide a missing plugin. */
 async function prettifyName(document: vscode.TextDocument, position: vscode.Position): Promise<string | undefined> {
-  const response = await vscode.commands.executeCommand<{ body?: { __prettifyResponse?: { name: string } } }>(
+  const response = await vscode.commands.executeCommand<{ body?: { __prettifyPlusPlusResponse?: { name: string } } }>(
     "typescript.tsserverRequest",
     "completionInfo",
     {
       file: document.uri,
       line: position.line + 1,
       offset: position.character + 1,
-      triggerCharacter: { meta: "prettify-type-info-request", options: {} },
+      triggerCharacter: { meta: "prettify-ts-plus-plus-type-info-request", options: {} },
     },
     { executionTarget: 0 },
   );
-  return response?.body?.__prettifyResponse?.name;
+  return response?.body?.__prettifyPlusPlusResponse?.name;
 }
 
 suite("Real-world editor smoke test", () => {
@@ -51,7 +51,7 @@ suite("Real-world editor smoke test", () => {
     if (!smoke) this.skip();
     document = await vscode.workspace.openTextDocument(path.join(workspace, smoke.file));
     editor = await vscode.window.showTextDocument(document);
-    await vscode.extensions.getExtension("MylesMurphy.prettify-ts")?.activate();
+    await vscode.extensions.getExtension("EthanSK.prettify-ts-plus-plus")?.activate();
     const first = smoke.identifiers[0]!;
     // Large projects take a while to load; wait for the plugin rather than a fixed delay.
     for (let attempt = 0; attempt < 180; attempt++) {
@@ -76,7 +76,10 @@ suite("Real-world editor smoke test", () => {
       editor.selection = new vscode.Selection(position, position);
       const original = await vscode.env.clipboard.readText();
       try {
-        for (const command of ["prettify-ts.copyPrettifiedType", "prettify-ts.fullCopyPrettifiedType"]) {
+        for (const command of [
+          "prettify-ts-plus-plus.copyPrettifiedType",
+          "prettify-ts-plus-plus.fullCopyPrettifiedType",
+        ]) {
           await vscode.env.clipboard.writeText("");
           await vscode.commands.executeCommand(command);
           const copied = await vscode.env.clipboard.readText();
