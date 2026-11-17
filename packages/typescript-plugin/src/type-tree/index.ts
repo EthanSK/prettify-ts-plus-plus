@@ -114,10 +114,10 @@ export function getTypeInfoAtPosition(
    * Previews keep the compiler's ordinary truncation (`Foo<...>`), which protects structural reference fallbacks.
    * Copies must paste as valid TypeScript, so they ask for the full text; the text budget still bounds it.
    */
-  function typeText(type: ts.Type, flags = typescript.TypeFormatFlags.None): string {
+  function typeText(type: ts.Type, flags = typescript.TypeFormatFlags.None, enclosingScope?: ts.Node): string {
     return checker.typeToString(
       type,
-      undefined,
+      enclosingScope,
       options.copy ? flags | typescript.TypeFormatFlags.NoTruncation : flags,
     );
   }
@@ -125,8 +125,11 @@ export function getTypeInfoAtPosition(
   // Previews mark only the elisions they have always reported; copies also report `Foo<...>` and `[...]`.
   const compilerElision = options.copy ? /\.\.\. \d+ more|\.\.\.$|<\.\.\.>|\[\.\.\.\]/ : /\.\.\. \d+ more|\.\.\.$/;
 
-  function reference(type: ts.Type, expandAlias = false): TypeTree {
-    const text = typeText(type, expandAlias ? typescript.TypeFormatFlags.InTypeAlias : typescript.TypeFormatFlags.None);
+  function reference(type: ts.Type, expandAlias = false, enclosingScope?: ts.Node): TypeTree {
+    const flags =
+      (expandAlias ? typescript.TypeFormatFlags.InTypeAlias : typescript.TypeFormatFlags.None) |
+      (enclosingScope ? typescript.TypeFormatFlags.UseFullyQualifiedType : typescript.TypeFormatFlags.None);
+    const text = typeText(type, flags, enclosingScope);
     if (compilerElision.test(text)) reasons.add("compiler text limit");
     return { kind: "reference", typeName: boundedText(text) };
   }
@@ -509,7 +512,16 @@ export function getTypeInfoAtPosition(
       declared.types.length > options.maxUnionMembers ||
       (depth >= options.maxDepth && declared.types.some(isElidedAtMaxDepth));
     if (!incomplete) return undefined;
-    const name = reference(declared);
+    // A scoped alias such as A.Choice cannot become bare Choice outside its namespace/function.
+    // The public printer qualifies accessible symbols and expands private aliases that cannot be named here.
+    // Top-level module aliases keep the existing short display instead of acquiring long import paths.
+    const scoped = declared.aliasSymbol.declarations?.some(
+      (declaration) =>
+        typescript.isTypeAliasDeclaration(declaration) &&
+        declaration.parent &&
+        !typescript.isSourceFile(declaration.parent),
+    );
+    const name = reference(declared, false, scoped ? sourceFile : undefined);
     const rest = members.filter((member) => !declared.types.includes(member));
     if (!rest.length) return name;
     const others = [...rest].sort(sortUnionTypes).map((member) => getTypeTree(member, depth, visited));

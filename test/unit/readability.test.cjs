@@ -10,12 +10,16 @@ const ts = require(process.env.PRETTIFY_TEST_TYPESCRIPT_PATH || "typescript");
 const api = require("../out-unit/entry");
 const file = path.join(__dirname, "readability-virtual.ts").split(path.sep).join("/");
 
-function programFor(source, exact) {
+function programFor(source, exact, dependencies = {}) {
   const options = { strict: true, exactOptionalPropertyTypes: exact, target: ts.ScriptTarget.ESNext, noEmit: true };
   const host = ts.createCompilerHost(options),
     original = host.getSourceFile;
   host.getSourceFile = (name, ...args) =>
-    name === file ? ts.createSourceFile(name, source, options.target, true) : original(name, ...args);
+    name === file || Object.hasOwn(dependencies, name)
+      ? ts.createSourceFile(name, name === file ? source : dependencies[name], options.target, true)
+      : original(name, ...args);
+  const originalExists = host.fileExists;
+  host.fileExists = (name) => Object.hasOwn(dependencies, name) || originalExists(name);
   const program = ts.createProgram([file], options, host);
   return { program, checker: program.getTypeChecker(), sourceFile: program.getSourceFile(file) };
 }
@@ -24,8 +28,8 @@ function programFor(source, exact) {
  * Hover defaults unless overridden: Max Depth 1 and the default union limit, as Ethan uses them, requested the way
  * this fork's client does (it declares that it renders grouped never keys).
  */
-function render(source, { marker = "Test", exact = false, ...overrides } = {}) {
-  const { program, checker, sourceFile } = programFor(source, exact),
+function render(source, { marker = "Test", exact = false, dependencies = {}, ...overrides } = {}) {
+  const { program, checker, sourceFile } = programFor(source, exact, dependencies),
     errors = [];
   const at = source.lastIndexOf(marker);
   assert.ok(at >= 0, "marker " + marker);
@@ -425,4 +429,32 @@ test("cancellation interrupts shared-property analysis before it scans the remai
   assert.equal(cancelled, true);
   assert.ok(info === undefined || info.truncationReasons?.includes("cancelled"));
   assert.ok(reads < 20, `Continued checking ${reads} field types after cancellation`);
+});
+
+test("same-named scoped aliases stay qualified and inaccessible aliases expand in copies", () => {
+  const choices = (prefix) => Array.from({ length: 20 }, (_, index) => JSON.stringify(prefix + index)).join(" | ");
+  const source = `namespace A { export type Choice = ${choices("a")}; export type Box = { value: Choice }; }
+namespace B { export type Choice = ${choices("b")}; export type Box = { value: Choice }; }
+type Test = { one: A.Box; two: B.Box };`;
+  for (const exact of [false, true]) {
+    const copied = equivalentCopy(source, { exact, maxUnionMembers: 15 });
+    assert.match(copied, /value: A\.Choice/);
+    assert.match(copied, /value: B\.Choice/);
+    equivalentCopy(source, { exact, fullExpansion: true });
+    const privateSource = `namespace A { type Hidden = ${choices("x")}; export type Box = { value: Hidden }; }
+type Test = { one: A.Box };`;
+    assert.doesNotMatch(equivalentCopy(privateSource, { exact, maxUnionMembers: 15 }), /\bHidden\b/);
+    // A merged top-level const/type has a VariableDeclarationList parent as well as a SourceFile parent.
+    // The value declaration must not make its type alias appear namespace-scoped and lengthen ordinary hovers.
+    const dependency = path.join(__dirname, "readability-dependency.ts").split(path.sep).join("/");
+    const { text } = render('import type { Box } from "./readability-dependency"; type Test = { one: Box };', {
+      exact,
+      maxDepth: 8,
+      dependencies: {
+        [dependency]: `export const Choice = {} as const; export type Choice = ${choices("m")}; export type Box = { value: Choice };`,
+      },
+    });
+    assert.match(text, /value: Choice;/);
+    assert.doesNotMatch(text, /import\(/);
+  }
 });
