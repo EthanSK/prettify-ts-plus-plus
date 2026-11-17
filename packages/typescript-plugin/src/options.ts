@@ -47,6 +47,11 @@ export const FULL_COPY_LIMITS: SafetyLimits = {
   milliseconds: 5000,
 };
 
+/**
+ * Long definitions are shortened to keep the hover manageable; the link opens the full source. Claude Opus 5.5
+ */
+export const SOURCE_LIMITS = { lines: 20, characters: 1500 };
+
 export function integerSetting(value: unknown, fallback: number, minimum: number, maximum = MAX_SETTING): number {
   return typeof value === "number" && Number.isFinite(value)
     ? Math.min(maximum, Math.max(minimum, Math.floor(value)))
@@ -83,6 +88,7 @@ export function normalizeOptions(input: Partial<PrettifyOptions> = {}): Prettify
   result.fullExpansion = input.fullExpansion === true;
   result.copy = input.copy === true || result.fullExpansion;
   result.groupNeverProperties = input.groupNeverProperties === true && !result.copy;
+  result.showSource = input.showSource === true && !result.copy;
   if (result.fullExpansion) {
     result.maxDepth = MAX_SETTING;
     result.maxProperties = MAX_SETTING;

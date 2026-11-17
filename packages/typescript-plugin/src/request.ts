@@ -30,6 +30,12 @@ export type PrettifyOptions = {
   groupNeverProperties?: boolean;
 
   /**
+   * The client shows `TypeInfo.source` beneath the hover, so the plugin sends the authored definition only when
+   * asked; older clients would ignore it. Never applies to copies, which must contain only the type. Claude Opus 5.5
+   */
+  showSource?: boolean;
+
+  /**
    * Treat underscore-prefixed members as private when hiding private properties.
    * Defaults to true when omitted for compatibility with older requests.
    */

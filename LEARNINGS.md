@@ -20,6 +20,10 @@ New preprocessing scans need the same cancellation and elapsed-time limits as tr
 
 ## Verify the installed artifact and painted hover separately
 
+Authored source and native hover de-duplication are separate decisions. A useful original helper expression can differ from an expansion that TypeScript already displays. Retain the extension hover when that source section exists, while still skipping a truly redundant expansion when source is absent or identical. The editor regression covers both paths; neither Copy command asks for source metadata.
+
+VS Code 1.144's MarkdownString code-block helper counts backticks only at column zero. Markdown can close a fence after up to three leading spaces, so an indented source comment can escape the generated block. The authored-source renderer chooses an outer fence longer than every backtick run in its bounded text. Keep the raw source unchanged and the Markdown untrusted; check both indented-only and ordinary fences with the real parser/editor.
+
 An installed extension's plugin `main` can name a directory. Node's module resolution, rather than a direct file hash of that path, identifies the actual entry.
 
 A focused native hover can remain on the previous symbol after the editor selection changes. Metadata and `executeHoverProvider` text do not prove which popup is painted. Dismiss the old hover, require visible content for the new symbol, then capture it. Tall native hovers intentionally scroll; inspect their final branches too.

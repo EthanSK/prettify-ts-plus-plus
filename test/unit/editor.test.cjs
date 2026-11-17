@@ -70,6 +70,19 @@ const mock = {
     appendText(text) {
       this.value += text;
     }
+    appendMarkdown(text) {
+      this.value += text;
+    }
+  },
+  // Deliberately unencoded, so the hover's own escaping of link targets is what the tests check. Claude Opus 5.5
+  Uri: {
+    file(fileName) {
+      return {
+        with({ fragment }) {
+          return { toString: () => "file://" + fileName + "#" + fragment };
+        },
+      };
+    },
   },
   Hover: class {
     constructor(contents) {
@@ -201,6 +214,126 @@ test("hover shows earlier markers and hides duplicates of TypeScript's own hover
   hover = await providers.get("typescript").provideHover(document, { line: 0, character: 1 }, token);
   assert.equal(hover, undefined);
 });
+const source = {
+  text: "export type Test = ExactlyOneOf<[{ value: string }, { other: number }]>;",
+  fileName: "/work/types.ts",
+  line: 4,
+  character: 2,
+};
+async function hoverWith(response, quickInfo) {
+  api.registerHoverProvider({ subscriptions: [] }, client());
+  handler = async (command, method) =>
+    method === "completionInfo"
+      ? { body: { __prettifyPlusPlusResponse: response } }
+      : quickInfo && { body: { displayString: quickInfo } };
+  return providers.get("typescript").provideHover(document, { line: 0, character: 1 }, token);
+}
+
+test("the authored source follows the prettified type as its own linked section", async () => {
+  const quickInfo = "type Test = Native";
+  const hover = await hoverWith({ ...info, source }, quickInfo);
+  assert.equal(hover.contents.length, 2);
+  assert.equal(hover.contents[0].value, "type Test = {\n    value: string;\n}\n");
+  assert.equal(
+    hover.contents[1].value,
+    "Source: [types\\.ts:5](file:///work/types.ts#L5,3)\n\n```typescript\n" + source.text + "\n```\n",
+  );
+  // Untrusted: no command link can run, and TypeScript's own hover is left to VS Code, not repeated.
+  assert.equal(hover.contents[1].isTrusted, undefined);
+  assert.ok(!hover.contents.some((part) => part.value.includes(quickInfo)));
+});
+
+test("unusual file names cannot break out of the link", async () => {
+  const fileName = "/work/a b)(c]`[x](command:evil)<y>\n#.ts";
+  const hover = await hoverWith({ ...info, source: { ...source, fileName } });
+  const [heading] = hover.contents[1].value.split("\n\n");
+  const target = heading.slice(heading.lastIndexOf("](") + 2, -1);
+  assert.doesNotMatch(target, /[\s()<>[\]`]/);
+  assert.match(target, /^file:\/\/\/work\/a%20b%29%28c%5D%60%5Bx%5D%28command:evil%29%3Cy%3E%0A#\.ts#L5,3$/);
+  assert.equal(heading.indexOf("]("), heading.lastIndexOf("]("));
+  assert.match(heading, /^Source: \[a b\\\)\\\(c\\\]\\`\\\[x\\\]\\\(command:evil\\\)\\<y\\> \\#\\\.ts:5\]\(/);
+});
+
+test("useful authored source survives a matching native expansion", async () => {
+  const native = "type Test = { value: string; }";
+  const hover = await hoverWith({ ...info, source }, native);
+  assert.equal(hover.contents.length, 2);
+  assert.match(hover.contents[1].value, /ExactlyOneOf/);
+  assert.equal(await hoverWith(info, native), undefined);
+  assert.equal(await hoverWith({ ...info, source: { ...source, text: native } }, native), undefined);
+});
+
+test("the source is left out when it matches the expansion, is missing or is not a real file location", async () => {
+  for (const candidate of [
+    { ...source, text: "export type Test = { value: string };" },
+    { ...source, fileName: "types.ts" },
+    { ...source, line: -1 },
+    { ...source, character: 1.5 },
+    { ...source, text: 42 },
+    { ...source, text: "  " },
+    undefined,
+  ]) {
+    const hover = await hoverWith({ ...info, source: candidate });
+    assert.equal(hover.contents.value, "type Test = {\n    value: string;\n}\n", JSON.stringify(candidate));
+  }
+  // An annotation that reads the same as the expanded value.
+  const value = { ...info, declaration: "const Test: " };
+  const hover = await hoverWith({ ...value, source: { ...source, text: "Test: { value: string }" } });
+  assert.equal(hover.contents.value, "const Test: {\n    value: string;\n}\n");
+});
+
+test("a shortened source says so, including when Max Characters cuts it", async () => {
+  let hover = await hoverWith({ ...info, source: { ...source, cut: true } });
+  assert.match(hover.contents[1].value, /^Source \(shortened\): \[/);
+  values.maxCharacters = 20;
+  hover = await hoverWith({ ...info, source });
+  assert.match(hover.contents[1].value, /^Source \(shortened\): \[/);
+  assert.match(hover.contents[1].value, /\)\n\n```typescript\nexport type Test = E\.\.\.\n```\n$/);
+});
+
+test("source comments with indented backticks remain one literal code block", async () => {
+  for (const indentation of ["", " ", "  ", "   "]) {
+    const text = `type Test = {\n/*\n${indentation}\`\`\`\n[keep as code](command:mustNotRun)\n${indentation}\`\`\`\n*/\nvalue: string;\n};`;
+    const hover = await hoverWith({ ...info, source: { ...source, text } });
+    const markdown = hover.contents[1].value;
+    const block = markdown.slice(markdown.indexOf("\n\n") + 2);
+    assert.equal(block, "````typescript\n" + text + "\n````\n");
+    assert.equal(hover.contents[1].isTrusted, undefined);
+  }
+});
+
+test("stale or cancelled hovers show no source either", async () => {
+  api.registerHoverProvider({ subscriptions: [] }, client());
+  handler = async (command, method) => {
+    if (method === "quickinfo") document.version++;
+    return method === "completionInfo" ? { body: { __prettifyPlusPlusResponse: { ...info, source } } } : undefined;
+  };
+  assert.equal(await providers.get("typescript").provideHover(document, { line: 0, character: 1 }, token), undefined);
+  handler = async (command, method) => {
+    if (method === "quickinfo") token.isCancellationRequested = true;
+    return method === "completionInfo" ? { body: { __prettifyPlusPlusResponse: { ...info, source } } } : undefined;
+  };
+  assert.equal(await providers.get("typescript").provideHover(document, { line: 0, character: 1 }, token), undefined);
+});
+
+test("copies contain only the type, and only hovers ask for the source", async () => {
+  const seen = [];
+  handler = async (command, method, args) => {
+    seen.push(args.triggerCharacter.options);
+    return { body: { __prettifyPlusPlusResponse: { ...info, source } } };
+  };
+  api.registerCommands({ subscriptions: [] }, client());
+  for (const name of ["prettify-ts-plus-plus.copyPrettifiedType", "prettify-ts-plus-plus.fullCopyPrettifiedType"]) {
+    await commands.get(name)();
+    assert.equal(clipboard, "type Test = {\n    value: string;\n}\n");
+  }
+  assert.deepEqual(
+    seen.map((options) => options.showSource),
+    [false, false],
+  );
+  assert.equal(api.readSettings(document).options.showSource, true);
+});
+
 test("inline presentation limits do not add hover footers; invisible safety limits do", async () => {
   api.registerHoverProvider({ subscriptions: [] }, client());
   for (const [reasons, footer] of [

@@ -17,6 +17,8 @@ export function readSettings(document?: vscode.TextDocument, full = false, copy 
   options.copy = copy || full;
   // This renderer shows `neverProperties`; the plugin ignores the flag for copies.
   options.groupNeverProperties = true;
+  // The hover shows the authored definition; the plugin ignores the flag for copies.
+  options.showSource = true;
   return {
     config,
     enabled: config.get("enabled", DISPLAY_DEFAULTS.enabled),

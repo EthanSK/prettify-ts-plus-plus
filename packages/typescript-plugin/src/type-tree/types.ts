@@ -72,6 +72,18 @@ export type TypeTree = { typeName: string } & (
 );
 
 /**
+ * The hovered type's definition exactly as written, such as `type Update = ExactlyOneOf<...>`, for hover previews
+ * only. `line` and `character` are zero-based; `cut` means the text stops before the definition ends. Claude Opus 5.5
+ */
+export type TypeSource = {
+  text: string;
+  fileName: string;
+  line: number;
+  character: number;
+  cut?: boolean;
+};
+
+/**
  * TypeInfo contains the type information of a TypeScript node.
  */
 export type TypeInfo = {
@@ -80,4 +92,5 @@ export type TypeInfo = {
   name: string;
   truncationReasons?: string[];
   compilerVersion?: string;
+  source?: TypeSource;
 };

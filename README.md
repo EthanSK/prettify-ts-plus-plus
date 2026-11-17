@@ -37,6 +37,12 @@ Enable `prettify-ts-plus-plus.factorSharedUnionProperties` to show fields shared
 
 Enum names and proven optional-`never` fields are clearer automatically. Hover summaries can group several excluded fields in a `/* never: ... */` comment; both Copy commands keep real property declarations. Without `exactOptionalPropertyTypes`, an optional `never` field can still explicitly contain `undefined`, just as in the original source.
 
+## Authored source
+
+When the original definition adds useful information, a separate Source section follows the prettified type. It reads the actual alias, interface or matching annotation, preserving helper expressions such as `ExactlyOneOf<...>`. TypeScript's ordinary hover remains below it.
+
+Source previews stop at 20 lines or 1,500 characters, and the file link opens the full definition. Max Characters can shorten the preview further. Identical definitions and ambiguous or unsupported source are omitted; this includes merged interfaces, inferred values, narrowed annotations, class/function bodies, JSDoc and generated Vue source. Both Copy commands continue returning only the resolved type.
+
 ## Checks
 
 ```sh

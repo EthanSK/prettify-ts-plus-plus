@@ -1,11 +1,12 @@
 import type * as ts from "typescript";
 import type { Language } from "@volar/language-core";
-import type { TypeFunctionSignature, TypeInfo, TypeProperty, TypeTree } from "./types";
+import type { TypeFunctionSignature, TypeInfo, TypeProperty, TypeSource, TypeTree } from "./types";
 import type { PrettifyOptions } from "../request";
 import { FULL_COPY_LIMITS, PREVIEW_LIMITS, normalizeOptions } from "../options";
 import { getDescendantAtRange } from "./get-ast-node";
 import { getPositionForVue } from "./vue";
 import { enumParent, resolvedReadonly } from "./compiler-internals";
+import { getAuthoredSource } from "./source";
 
 export type AnalysisControl = {
   isCancellationRequested?: () => boolean;
@@ -1074,6 +1075,7 @@ export function getTypeInfoAtPosition(
       typescript.isNewExpression(callee.parent) && callee.parent.expression === callee ? callee.parent : undefined;
     let tree: TypeTree;
     let declaration: string;
+    let source: TypeSource | undefined;
     const constructSignatures = type.getConstructSignatures();
     // Class values (constructor calls, static access, `extends`) show the constructor; declarations and imports do not.
     if (
@@ -1120,6 +1122,15 @@ export function getTypeInfoAtPosition(
       if (declaration.startsWith("interface ") && tree.kind !== "object") {
         declaration = "type " + declaration.slice("interface ".length).trimEnd() + " = ";
       }
+      // Extra hover detail: past the deadline it is skipped without reporting a limit, and a failure here keeps
+      // the prettified result.
+      if (options.showSource && Date.now() <= deadline) {
+        try {
+          source = getAuthoredSource(typescript, checker, node, symbol, type);
+        } catch (error) {
+          control.onError?.(error);
+        }
+      }
     }
     if (control.isCancellationRequested?.()) return undefined;
     const result: TypeInfo = {
@@ -1129,11 +1140,15 @@ export function getTypeInfoAtPosition(
       compilerVersion: typescript.version,
       ...(reasons.size ? { truncationReasons: [...reasons] } : {}),
     };
-    if (JSON.stringify(result).length > limits.characters) {
+    let size = JSON.stringify(result).length;
+    if (size > limits.characters) {
       result.typeTree = { kind: "reference", typeName: "unknown /* response size limit */" };
       reasons.add("response size limit");
       result.truncationReasons = [...reasons];
+      size = JSON.stringify(result).length;
     }
+    // The source is added last and only when it fits, so it can never cost the prettified type its place.
+    if (source && size + JSON.stringify(source).length <= limits.characters) result.source = source;
     return result;
   } catch (error) {
     control.onError?.(error);
