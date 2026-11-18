@@ -493,13 +493,15 @@ export function getTypeInfoAtPosition(
     // private properties are visible. Keep class and interface declarations inspectable.
     const declaration = hoverNode.parent;
     const aliasDeclaration = typescript.isTypeAliasDeclaration(declaration) && declaration.name === hoverNode;
-    if (!visited.size && copiedVariable && preserveClassIdentity(type, members)) {
+    const nominal = (visited.size > 0 || aliasDeclaration || !!copiedVariable) && preserveClassIdentity(type, members);
+    if (nominal === undefined) return { kind: "reference", typeName: "unknown /* expansion limit */" };
+    if (nominal && !visited.size && copiedVariable) {
       // Copy commands show the configured members of the variable itself. Its named class
       // also keeps the private/protected constraint that a plain list of fields cannot express.
       copiedVariable.className =
         originalTypeReference(copiedVariable.declaration.type, type) ?? propertyOwnerName(type);
       if (!copiedVariable.className) reasons.add("private class identity omitted");
-    } else if ((visited.size || aliasDeclaration) && preserveClassIdentity(type, members)) {
+    } else if (nominal) {
       if (type === rootType && aliasDeclaration)
         return { kind: "reference", typeName: boundedText(declaration.type.getText()) };
       const symbol = type.aliasSymbol ?? type.getSymbol();
@@ -988,7 +990,7 @@ export function getTypeInfoAtPosition(
       !apparent.getConstructSignatures().length &&
       !checker.getIndexInfosOfType(apparent).length &&
       apparent.getProperties().length > 0 &&
-      !preserveClassIdentity(member, apparent.getProperties())
+      preserveClassIdentity(member, apparent.getProperties()) === false
     );
   }
 
@@ -1175,6 +1177,12 @@ export function getTypeInfoAtPosition(
         const name = query ? node.exprName : node.typeName;
         let root = name;
         while (typescript.isQualifiedName(root)) root = root.left;
+        if (query) {
+          // The same value can have a narrower type inside a branch. The binder attaches the same
+          // flow node to ordinary straight-line uses; if that evidence is missing, ask the printer.
+          const atSource = (root as ts.Identifier & { flowNode?: object }).flowNode;
+          if (!atSource || atSource !== (hoverNode as ts.Node & { flowNode?: object }).flowNode) return false;
+        }
         const meaning = query
           ? typescript.SymbolFlags.Value
           : root === name
@@ -1297,13 +1305,15 @@ export function getTypeInfoAtPosition(
     return 0;
   }
 
-  function preserveClassIdentity(type: ts.Type, members: readonly ts.Symbol[]): boolean {
+  function preserveClassIdentity(type: ts.Type, members: readonly ts.Symbol[]): boolean | undefined {
     if (!options.copy) return false;
     const target = (type as ts.TypeReference).target ?? type;
-    return (
-      (target.isClassOrInterface() || type.isIntersection()) &&
-      members.some((member) => !canPreprocess() || restrictedClassVisibility(member))
-    );
+    if (!target.isClassOrInterface() && !type.isIntersection()) return false;
+    for (const member of members) {
+      if (!canPreprocess()) return undefined;
+      if (restrictedClassVisibility(member)) return true;
+    }
+    return false;
   }
 
   function restrictedClassVisibility(symbol: ts.Symbol): TypeProperty["classVisibility"] {

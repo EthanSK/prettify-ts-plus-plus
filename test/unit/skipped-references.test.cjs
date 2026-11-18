@@ -14,10 +14,12 @@ test("copies reuse an exact skipped reference only while its type and value name
     "declare const selected: Array<typeof seed>;",
     "declare const qualified: Array<Keys.Entry | typeof seed>;",
     "type Box<T> = { result: Array<T> }; declare const instance: Box<number>;",
-    "function ordinary() { return [selected, qualified]; }",
+    "void [selected, qualified];",
+    ...Array.from({ length: 12 }, () => "void selected;"),
+    "declare const mixed: { kind: 'a' } | { kind: 'b' }; declare const mixedArray: Array<typeof mixed>;",
+    "if (mixed.kind === 'a') { void mixedArray; }",
     "function shadowValue() { const seed = 1; return selected; }",
     "namespace Shadow { namespace Keys { export type Entry = number; } export const result = qualified; }",
-    ...Array.from({ length: 12 }, () => "void selected;"),
   ].join("\n");
   const options = { strict: true, noEmit: true, types: [], target: ts.ScriptTarget.ESNext };
   const host = ts.createCompilerHost(options);
@@ -66,6 +68,8 @@ test("copies reuse an exact skipped reference only while its type and value name
   }
   assert.equal(prints, 0, "Repeated copies should use the tiny authored reference without serializing its object");
   assert.match(copied(position("return selected;", "selected")), /field0:/);
+  assert.equal(copied(position("mixedArray: Array", "mixedArray")), "const mixedArray: Array<typeof mixed>");
+  assert.match(copied(position("void mixedArray;", "mixedArray")), /"b"/);
   assert.doesNotMatch(copied(position("result = qualified;", "qualified")), /Array<Keys\.Entry \| typeof seed>/);
   assert.match(copied(position("instance: Box", "instance")), /result: Array<number>/);
 });

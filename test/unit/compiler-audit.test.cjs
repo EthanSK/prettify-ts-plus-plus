@@ -225,3 +225,36 @@ test("an unnameable root class variable still shows fields and marks its omitted
     /publicField: string;/,
   );
 });
+
+test("cancelling a class visibility scan stops before serializing its type", () => {
+  const source = "class Example { first = 1; second = 2; private secret = 3; } type Test = { item: Example };";
+  const { checker, file } = programFor(source);
+  const item = checker.getTypeFromTypeNode(file.statements[1].type).getProperty("item");
+  const first = checker.getApparentType(checker.getTypeOfSymbol(item)).getProperty("first");
+  const declarations = first.getDeclarations.bind(first);
+  let cancelled = false;
+  first.getDeclarations = () => {
+    cancelled = true;
+    return declarations();
+  };
+  let serializedAfterCancellation = 0;
+  for (const key of ["typeToTypeNode", "typeToString"]) {
+    const original = checker[key].bind(checker);
+    checker[key] = (...args) => {
+      if (cancelled) serializedAfterCancellation++;
+      return original(...args);
+    };
+  }
+  const info = api.getTypeInfoAtPosition(
+    ts,
+    checker,
+    file,
+    source.indexOf("Test") + 1,
+    { ...api.DEFAULT_OPTIONS, copy: true },
+    undefined,
+    { isCancellationRequested: () => cancelled },
+  );
+  assert.ok(cancelled);
+  assert.ok(info === undefined || info.truncationReasons?.includes("cancelled"));
+  assert.equal(serializedAfterCancellation, 0);
+});

@@ -42,6 +42,12 @@ Keep disposable VS Code integration-profile paths short. A version-specific prof
 
 Local package files, extension-host activation and TypeScript-plugin registration are separate evidence. Keep their identities and hashes tied to the reviewed VSIX. Preserve the original extension and the prior scoped settings for rollback. The release process lives in [PRIVATE-RELEASE.md](docs/PRIVATE-RELEASE.md).
 
+## Bound what the compiler retains between copies
+
+TypeScript can cache printed type nodes on the enclosing syntax node for the lifetime of a project. Repeatedly printing a structural type at different identifiers can keep a separate copy of its tree at each cursor. Ordinary print fallbacks can omit that scope. When a name needs qualification, reuse a lexical scope only while the bindings stay the same.
+
+A skipped annotation such as `Array<typeof seed>` can be much shorter than the resolved object. Reuse it only when its type, names and value narrowing still match at the destination. The skipped-reference regression checks the ordinary copy path, shadowed names, narrowed values and a substituted type parameter. Stop a class visibility scan on cancellation before asking the compiler to serialize it.
+
 ## Preserve Marketplace updates when releasing
 
 VS Code's CLI installs a local VSIX with `installGivenVersion: true`, which pins the version and disables
