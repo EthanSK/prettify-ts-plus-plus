@@ -55,7 +55,7 @@ function render(source, { marker = "Test", exact = false, dependencies = {}, ...
 function equivalentCopy(source, { exact = false, ...overrides } = {}) {
   const { text } = render(source, { exact, copy: true, maxDepth: 8, maxUnionMembers: 100, ...overrides });
   const actual = text.replace(/^type Test\b/, "type Actual");
-  const { program, checker, sourceFile } = programFor(source + "\n" + actual, exact);
+  const { program, checker, sourceFile } = programFor(source + "\n" + actual, exact, overrides.dependencies);
   assert.deepEqual(
     program.getSemanticDiagnostics(sourceFile).map((d) => ts.flattenDiagnosticMessageText(d.messageText, "\n")),
     [],
@@ -70,6 +70,30 @@ function equivalentCopy(source, { exact = false, ...overrides } = {}) {
 }
 
 const MODEL_ENUM = 'enum Model { A = "a", B = "b", C = "c", D = "d" } enum Code { X = 1, Y = 2 }';
+
+test("copied generic references follow the consumer's import aliases and optional field semantics", () => {
+  const dependency = path.join(__dirname, "readability-dependency.ts").split(path.sep).join("/");
+  const dependencies = {
+    [dependency]:
+      "export type Wrap<T> = { value: T }; export interface Box<T> { payload?: Wrap<T>;" +
+      " explicit?: Map<string, T> | undefined; list: Array<T>; next?: Box<T> }",
+  };
+  const source = 'import type { Box, Wrap as Parcel } from "./readability-dependency"; type Test = Box<number>;';
+  for (const exact of [true, false]) {
+    const options = {
+      dependencies,
+      exact,
+      skippedTypeNames: ["Map", "Array"],
+      unwrapGenericArgumentsTypeNames: ["Wrap"],
+    };
+    for (const fullExpansion of [false, true]) {
+      const text = equivalentCopy(source, { ...options, fullExpansion });
+      assert.match(text, /payload\?: Parcel<number>/);
+      assert.match(text, /next\?: Box<number>/);
+      if (exact) assert.match(text, /explicit\?: Map<string, number> \| undefined/);
+    }
+  }
+});
 
 test("whole enums inside a hovered type keep their name; subsets and single members stay listed", () => {
   const { text } = render(

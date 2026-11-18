@@ -8,11 +8,19 @@ Naming an alias is also a semantic claim. In particular, `Required<{ value?: May
 
 Scoped aliases must remain valid at the hovered file's scope. Two namespaces can each export `Choice`; retaining bare `Choice` in a copied outer object loses both names. For scoped declarations, ask the public TypeScript printer for a fully qualified name in the source-file context. It produces `A.Choice` for an accessible export and expands an inaccessible private alias. Keep top-level module aliases on the existing short-name path. The scoped-alias regression checks normal and full copies in both optional-property modes.
 
+A property's written annotation can still contain `T` after the compiler has instantiated its owner as `Library<number>`. Use the annotation to recognize a skipped type and the resolved type at the hovered location to print its copy. A lexical name can also refer to a different symbol in the consumer. The cross-module copy regressions compile the result alongside the original using the consumer's actual import aliases.
+
+Check the rendered copy itself. Replacing a quoted property name, a default export or `-Infinity` in the test parser hid invalid declarations. TypeScript's printer represents numeric infinity as a numeric-literal node with text `Infinity`. Rendering that node as `1e999` preserves the numeric type, including inside a negative sign or a generic argument, without rewriting identifiers or strings named `Infinity`.
+
+Compare accepted and rejected assignments as well as checking types in both directions. A function-valued property and a method can appear equivalent in a comparison but accept different callbacks under strict function checking. A getter and setter can also accept different read and write types. The compiler audit suite exercises both operations and requires TypeScript to reject the invalid examples.
+
 Hover-only never summaries require an explicit renderer capability. Both Copy commands retain actual optional-never declarations; an older client without that capability receives individual fields. Do not shorten copied constraints into comments.
 
 ## Keep compaction conservative and bounded
 
 Whole-enum naming checks that every declared enum member is present. Subsets and single members stay distinct. Short complete literal unions remain expanded; an incomplete nested named union can retain its name, and the hovered root still expands.
+
+Print an enum member from its declared member type to keep singleton and quoted names. For copies, check that the printed name resolves to the intended symbol in the hovered scope. A private enum exposed by a public property may need an indexed access such as `PublicShape["role"]`; an optional indexed read can also add `undefined` that the original write rejected.
 
 Shared fields require identical resolved type objects, optionality, readonly and never status in every non-never branch. A conflict-reduced intersection can remain a union member even though it is equivalent to `never`; it must not prevent safe factoring. Signature-bearing/indexed objects and other unsupported shapes keep the original layout.
 

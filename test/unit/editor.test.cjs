@@ -166,6 +166,51 @@ test("toggle writes the highest effective workspace or language override", async
   assert.equal(updates[0].target, 2);
   assert.equal(updates[0].language, true);
 });
+test("a saved Promise preference yields to any configured generic list and to Full Copy", () => {
+  const config = require("../../packages/vscode-extension/package.json").contributes.configuration.properties;
+  assert.ok(config["prettify-ts-plus-plus.unwrapPromises"].deprecationMessage);
+  values.unwrapPromises = false;
+  assert.equal(api.readSettings(document).options.unwrapPromises, false);
+  assert.equal(api.readSettings(document, false, true).options.unwrapPromises, false);
+  assert.notEqual(api.readSettings(document, true, true).options.unwrapPromises, false);
+  for (const key of [
+    "globalValue",
+    "workspaceValue",
+    "workspaceFolderValue",
+    "globalLanguageValue",
+    "workspaceLanguageValue",
+    "workspaceFolderLanguageValue",
+  ]) {
+    inspected = { [key]: [] };
+    values.unwrapGenericArgumentsTypeNames = [];
+    assert.notEqual(api.readSettings(document).options.unwrapPromises, false, key);
+    assert.deepEqual(api.readSettings(document).options.unwrapGenericArgumentsTypeNames, [], key);
+  }
+});
+test("indentation bounds allocation and preserves ordinary widths in the real Copy command", async () => {
+  const manifest = require("../../packages/vscode-extension/package.json");
+  const limit = manifest.contributes.configuration.properties["prettify-ts-plus-plus.typeIndentation"].maximum;
+  assert.equal(limit, 64);
+  api.registerCommands({ subscriptions: [] }, client());
+  for (const [setting, expected] of [
+    [0, 0],
+    [2.9, 2],
+    [4, 4],
+    [8, 8],
+    [32, 32],
+    [limit, limit],
+    [Number.MAX_SAFE_INTEGER, limit],
+    ["invalid", 4],
+  ]) {
+    values.typeIndentation = setting;
+    assert.equal(api.readSettings(document).indentation, expected);
+    await commands.get("prettify-ts-plus-plus.copyPrettifiedType")();
+    assert.equal(
+      clipboard,
+      expected ? "type Test = {\n" + " ".repeat(expected) + "value: string;\n}\n" : "type Test = { value: string; }",
+    );
+  }
+});
 test("copies ignore Max Characters as before; full copy expands everything and preserves private choices", async () => {
   values.maxCharacters = 5;
   values.hidePrivateProperties = false;
@@ -184,6 +229,20 @@ test("copies ignore Max Characters as before; full copy expands everything and p
   assert.equal(seen[1].fullExpansion, true);
   assert.equal(seen[1].copy, true);
   assert.equal(seen[1].hidePrivateProperties, false);
+});
+test("an earlier Full Copy finishing late cannot overwrite the user's newer Copy", async () => {
+  api.registerCommands({ subscriptions: [] }, client());
+  let finishFullCopy;
+  handler = async (command, method, args) => {
+    if (args.triggerCharacter.options.fullExpansion) return new Promise((resolve) => (finishFullCopy = resolve));
+    return { body: { __prettifyPlusPlusResponse: { ...info, declaration: "type NewSelection = " } } };
+  };
+  const pending = commands.get("prettify-ts-plus-plus.fullCopyPrettifiedType")();
+  await commands.get("prettify-ts-plus-plus.copyPrettifiedType")();
+  assert.match(clipboard, /type NewSelection =/);
+  finishFullCopy({ body: { __prettifyPlusPlusResponse: info } });
+  await pending;
+  assert.match(clipboard, /type NewSelection =/);
 });
 test("hover shows earlier markers and hides duplicates of TypeScript's own hover", async () => {
   api.registerHoverProvider({ subscriptions: [] }, client());
@@ -263,6 +322,36 @@ test("useful authored source survives a matching native expansion", async () => 
   assert.equal(await hoverWith({ ...info, source: { ...source, text: native } }, native), undefined);
 });
 
+test("native and source comparisons keep literal contents, namespaces and type operators", async () => {
+  for (const [expanded, different] of [
+    ['"A.B"', '"B"'],
+    ['"a; b"', '"ab"'],
+    ["\x60a b\x60", "\x60ab\x60"],
+    ["A.Choice", "B.Choice"],
+    ["typeof value", "value"],
+    ["readonly string[]", "string[]"],
+    ["string", "string | number"],
+  ]) {
+    const preview = { ...info, typeTree: { kind: "reference", typeName: expanded } };
+    const native = "type Test = " + different;
+    assert.ok(await hoverWith(preview, native), expanded + " vs " + different);
+    const withSource = await hoverWith({ ...preview, source: { ...source, text: native } });
+    assert.equal(withSource.contents.length, 2, native);
+    assert.equal(await hoverWith(preview, "type Test = " + expanded), undefined);
+  }
+});
+
+test("the same property and parameter type in a labeled native hover is still hidden", async () => {
+  const property = { ...info, declaration: "type Test = ", typeTree: { kind: "primitive", typeName: "string" } };
+  for (const native of [
+    "(property) Container.Test: string",
+    "(parameter) Test: string",
+    "(alias) type Test = string\nimport Test",
+  ]) {
+    assert.equal(await hoverWith(property, native), undefined, native);
+  }
+});
+
 test("the source is left out when it matches the expansion, is missing or is not a real file location", async () => {
   for (const candidate of [
     { ...source, text: "export type Test = { value: string };" },
@@ -285,10 +374,19 @@ test("the source is left out when it matches the expansion, is missing or is not
 test("a shortened source says so, including when Max Characters cuts it", async () => {
   let hover = await hoverWith({ ...info, source: { ...source, cut: true } });
   assert.match(hover.contents[1].value, /^Source \(shortened\): \[/);
+  const native = "type Test = { value: string; }";
+  hover = await hoverWith({ ...info, source: { ...source, text: native, cut: true } }, native);
+  assert.match(hover.contents[1].value, /^Source \(shortened\): \[/);
   values.maxCharacters = 20;
   hover = await hoverWith({ ...info, source });
   assert.match(hover.contents[1].value, /^Source \(shortened\): \[/);
   assert.match(hover.contents[1].value, /\)\n\n```typescript\nexport type Test = E\.\.\.\n```\n$/);
+});
+test("a character limit leaves complete characters in the preview", () => {
+  assert.equal(api.limitPreview("a🚀b", 2), "a...");
+  assert.equal(api.limitPreview("a🚀b", 3), "a🚀...");
+  assert.equal(api.limitPreview("a🚀b", 4), "a🚀b");
+  assert.equal(api.limitPreview("a🚀b", 0), "...");
 });
 
 test("source comments with indented backticks remain one literal code block", async () => {

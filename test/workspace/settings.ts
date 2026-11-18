@@ -91,3 +91,15 @@ export type FilteringObject = {
   _quoted: number;
   [_filterSymbol]: boolean;
 };
+
+export interface PromiseItem {
+  text: string;
+}
+export declare const pendingEditorResult: Promise<PromiseItem>;
+export type EditorPromise<T> = Promise<T>;
+export declare const aliasedEditorResult: EditorPromise<PromiseItem>;
+export declare const Date: PromiseItem;
+
+// This editor regression compares the author's single quotes with TypeScript's printed double quotes.
+// prettier-ignore
+export type QuotedEditorFields = { status: 'A.B'; 'extra field': 'what; next?' };

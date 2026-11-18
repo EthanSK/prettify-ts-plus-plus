@@ -84,6 +84,9 @@ export type PrettifyOptions = {
    */
   unwrapFunctions: boolean;
 
+  /** Legacy per-Promise preference, sent only when the generic-argument list still uses its default. */
+  unwrapPromises?: boolean;
+
   /**
    * List of generic type names whose arguments should be displayed as-is, rather than resolving to their apparent (final) type.
    */

@@ -7,6 +7,8 @@ export type TypeProperty = {
   optional: boolean;
   readonly: boolean;
   type: TypeTree;
+  /** Paired accessor whose setter accepts a different type from the getter. */
+  writeType?: string;
 };
 
 /**
@@ -64,6 +66,8 @@ export type TypeTree = { typeName: string } & (
       kind: "function";
       excessSignatures: number;
       signatures: TypeFunctionSignature[];
+      /** TypeScript compares method parameters bivariantly under strictFunctionTypes. */
+      method?: boolean;
     }
   | { kind: "generic"; arguments: TypeTree[] }
   | { kind: "enum"; member: string }

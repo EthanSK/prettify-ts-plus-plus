@@ -17,7 +17,12 @@ export function registerHoverProvider(context: vscode.ExtensionContext, client: 
     const version = document.version;
     const info = await client.request(document, position, settings.options, token);
     if (!info || token.isCancellationRequested) return;
-    if (settings.options.skippedTypeNames.includes(info.name)) return;
+    if (
+      info.typeTree.kind === "reference" &&
+      settings.options.skippedTypeNames.includes(info.name) &&
+      (info.typeTree.typeName === info.name || info.typeTree.typeName.startsWith(info.name + "<"))
+    )
+      return;
     try {
       const parts = renderTypeParts(info, settings.indentation);
       const declaration = parts.declaration;
@@ -34,7 +39,7 @@ export function registerHoverProvider(context: vscode.ExtensionContext, client: 
         !source &&
         !limits.length &&
         /^(?:type|const|let|var|function)\b/.test(declaration) &&
-        sanitizeString(quickInfo).includes(sanitizeString(type))
+        nativeShowsExpansion(quickInfo, text, type)
       )
         return;
       const markdown = new vscode.MarkdownString();
@@ -49,6 +54,18 @@ export function registerHoverProvider(context: vscode.ExtensionContext, client: 
   for (const language of supportedLanguages) {
     context.subscriptions.push(vscode.languages.registerHoverProvider({ language }, { provideHover }));
   }
+}
+
+function nativeShowsExpansion(quickInfo: string, text: string, type: string): boolean {
+  const native = quickInfo.startsWith("(alias) ")
+    ? quickInfo.slice("(alias) ".length).replace(/\nimport [^\n]+$/, "")
+    : quickInfo;
+  if (sanitizeString(native) === sanitizeString(text)) return true;
+  // TypeScript labels properties and parameters and can include their containing type in the name.
+  const annotation = /^\((?:property|parameter|local var|local const)\) [^:\n]+:\s*/.exec(native);
+  if (annotation) return sanitizeString(native.slice(annotation[0].length)) === sanitizeString(type);
+  const method = /^\(method\) (?:[\w$]+\.)*[\w$]+(?=[<(])/.exec(native);
+  return Boolean(method && sanitizeString(native.slice(method[0].length)) === sanitizeString(type));
 }
 
 /**
@@ -73,8 +90,8 @@ function sourceSection(
     source.character < 0
   )
     return undefined;
-  const authored = sanitizeString(source.text.replace(/^(?:(?:export|declare|default)\s+)+/, ""));
-  if (shown.some((text) => sanitizeString(text) === authored)) return undefined;
+  const authored = sanitizeString(source.text);
+  if (!source.cut && shown.some((text) => sanitizeString(text) === authored)) return undefined;
   const uri = vscode.Uri.file(source.fileName).with({ fragment: `L${source.line + 1},${source.character + 1}` });
   const target = uri.toString().replace(/[\s()<>[\]\\`"']/g, percent);
   const label = escapeMarkdown(path.basename(source.fileName) + ":" + (source.line + 1));

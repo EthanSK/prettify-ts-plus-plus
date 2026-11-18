@@ -153,6 +153,33 @@ test("constructors select resolved overloads and inference; class values show th
   const declaration = inspect("class Test { value = 1; }").text;
   assert.match(declaration, /^class Test \{ value: number; \}/);
 });
+test("copying a class value preserves static and abstract members; a new call copies its resolved constructor", () => {
+  const source =
+    "abstract class Base { static label = 'base'; } const factory = Base;" +
+    "class Box { constructor(x: string); constructor(x: number); constructor(x: unknown) {} } new Box(1);";
+  for (const mode of [{ copy: true }, { fullExpansion: true }]) {
+    const factory = inspect(source, "Base;", mode).text;
+    const call = inspect(source, "Box(1)", mode).text;
+    assert.match(factory, /type BaseConstructor = typeof Base/);
+    assert.match(call, /type BoxConstructor = new \(x: number\) => Box/);
+    const { program, sourceFile } = programFor(
+      source +
+        "\n" +
+        factory +
+        ";\n" +
+        call +
+        ";\ndeclare const b: BaseConstructor; const label: string = b.label;\n" +
+        "// @ts-expect-error Abstract class values cannot be instantiated.\nnew b();\n" +
+        "declare const make: BoxConstructor; const n: Box = new make(1);\n" +
+        "// @ts-expect-error The selected overload at this call takes a number.\nnew make('x');",
+    );
+    assert.deepEqual(
+      program.getSemanticDiagnostics(sourceFile).map((d) => d.messageText),
+      [],
+    );
+  }
+});
+
 test("numeric-looking property keys retain exact names", () => {
   const text = equivalent('type Test = { "01": string; "9007199254740993": number };');
   assert.match(text, /"01"/);
@@ -473,6 +500,87 @@ test("skipped types keep their arguments in copies", () => {
     parses(property);
   }
 });
+test("skipped generic fields and signatures copy the arguments of the actual instantiation", () => {
+  const source =
+    "interface Holder<T> { members: Map<string, T>; optional?: Set<T>; explicit: Array<T>;" +
+    " convert: (value: Map<string, T>) => Set<T> } type Test = Holder<number>;";
+  const skippedTypeNames = ["Map", "Set", "Array"];
+  assert.match(inspect(source, "Test", { skippedTypeNames }).text, /members: Map<\.\.\.>/);
+  for (const mode of [{ copy: true }, { fullExpansion: true }, { copy: true, unwrapFunctions: false }]) {
+    const text = equivalent(source, "Test", { ...mode, skippedTypeNames });
+    assert.match(text, /members: Map<string, number>/);
+    assert.doesNotMatch(text, /\bT\b/);
+  }
+});
+
+test("skipped annotations follow narrowing and retain an accessible primitive alias", () => {
+  const source = 'type Label = string; declare const value: Label; if (value === "ready") { value; }';
+  for (const copy of [true, false]) {
+    const narrowed = inspect(source, "value;", { skippedTypeNames: ["Label"], copy });
+    assert.match(narrowed.text, /value: "ready"/);
+  }
+  const sourceAlias = "type ID = string; type Test = { id: ID };";
+  assert.match(equivalent(sourceAlias, "Test", { skippedTypeNames: ["ID"], copy: true }), /id: ID;/);
+});
+
+test("configured generic wrappers use names accessible from the copied declaration", () => {
+  const source =
+    "namespace Api { export type Wrap<T> = { value: T }; type Hidden<T> = { body: T };" +
+    " export interface Container<T> { parsed: Wrap<T>; privateAlias: Hidden<T> } } type Test = Api.Container<number>;";
+  const options = { unwrapGenericArgumentsTypeNames: ["Wrap", "Hidden"] };
+  for (const mode of [{ copy: true }, { fullExpansion: true }]) {
+    const text = equivalent(source, "Test", { ...options, ...mode });
+    assert.match(text, /parsed: Api\.Wrap<number>/);
+    assert.match(equivalent("type Test = Promise<{ value: number }>;", "Test", mode), /= Promise</);
+  }
+});
+
+test("intrinsic string transformations stay compact and equivalent in hovers and copies", () => {
+  for (const name of ["Uppercase", "Lowercase", "Capitalize", "Uncapitalize"]) {
+    const source = "type Test = " + name + "<string>;";
+    assert.equal(inspect(source).text, "type Test = " + name + "<string>");
+    assert.equal(equivalent(source, "Test", { fullExpansion: true }), "type Test = " + name + "<string>");
+  }
+  equivalent("type Test = Uppercase<string> & { readonly brand: 1 };", "Test", { copy: true });
+  equivalent("type Test = { key: Capitalize<string>; list: Lowercase<string>[] };", "Test", { fullExpansion: true });
+  assert.match(inspect('type Test = Uppercase<"hello">;').text, /"HELLO"/);
+  assert.match(inspect("type Test<T extends string> = Lowercase<T>;").text, /= Lowercase<T>$/);
+});
+
+test("copied function constraints use in-scope names and valid numeric literals", () => {
+  const source =
+    "namespace Api { export interface Base { value: number } " +
+    "export interface Holder { call: <T extends Base>(arg: T) => T; limit: <N extends -1e999>(n: N) => N } } " +
+    "type Test = Api.Holder;";
+  for (const mode of [{ copy: true }, { fullExpansion: true }]) {
+    const text = equivalent(source, "Test", mode);
+    assert.match(text, /T extends Api\.Base/);
+    assert.match(text, /N extends -1e999/);
+  }
+});
+
+test("copies of a default export or quoted property use a legal type declaration", () => {
+  const source = 'export default function () {return 1}; interface Labels { "aria-label"?: string }';
+  for (const mode of [{ copy: true }, { fullExpansion: true }]) {
+    for (const marker of ["default", "aria-label"]) {
+      const { text } = inspect(source, marker, mode);
+      assert.match(text, /^type Prettified = /);
+      parses(text);
+      const { program, sourceFile } = programFor(source + "\n" + text);
+      assert.equal(program.getSemanticDiagnostics(sourceFile).length, 0, text);
+    }
+    assert.match(inspect("function get() { return 1; }", "get", mode).text, /^function get\(/);
+  }
+});
+
+test("copied infinity literals keep their numeric meaning, including in skipped generic arguments", () => {
+  const source = 'type Test = { limits: -1e999 | 1e999; byKey: Map<1e999, -1e999>; label: "Infinity"; Infinity: 1 };';
+  const text = equivalent(source, "Test", { copy: true, skippedTypeNames: ["Map"] });
+  assert.match(text, /Map<1e999, -1e999>/);
+  assert.match(text, /label: "Infinity"/);
+  assert.match(text, /Infinity: 1/);
+});
+
 test("interfaces without an object body are written as aliases", () => {
   const { text } = inspect("let list: ReadonlyArray<string>;", "ReadonlyArray");
   assert.match(text, /^type ReadonlyArray = readonly T\[\]/);

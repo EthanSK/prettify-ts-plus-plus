@@ -5,6 +5,7 @@ import { reportedLimits, supportedLanguages } from "./type-client";
 import type { TypeClient } from "./type-client";
 
 export function registerCommands(context: vscode.ExtensionContext, client: TypeClient): void {
+  let latestCopy = 0;
   async function copyType(full: boolean): Promise<void> {
     const editor = vscode.window.activeTextEditor;
     if (!editor || !supportedLanguages.includes(editor.document.languageId)) {
@@ -13,6 +14,7 @@ export function registerCommands(context: vscode.ExtensionContext, client: TypeC
     }
     const document = editor.document;
     const position = editor.selection.active;
+    const request = ++latestCopy;
     const settings = readSettings(document, full, true);
     await vscode.window.withProgress(
       {
@@ -22,7 +24,7 @@ export function registerCommands(context: vscode.ExtensionContext, client: TypeC
       },
       async (_, token) => {
         const info = await client.request(document, position, settings.options, token);
-        if (token.isCancellationRequested) return;
+        if (token.isCancellationRequested || request !== latestCopy) return;
         if (!info) {
           void vscode.window.showErrorMessage(
             "No type information found. See the Prettify TS output for request errors.",

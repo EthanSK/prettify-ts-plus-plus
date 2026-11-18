@@ -57,6 +57,7 @@ type PrettifySettings = {
   skippedTypeNames?: string[];
   unwrapArrays?: boolean;
   unwrapFunctions?: boolean;
+  unwrapPromises?: boolean;
   unwrapGenericArgumentsTypeNames?: string[];
 };
 

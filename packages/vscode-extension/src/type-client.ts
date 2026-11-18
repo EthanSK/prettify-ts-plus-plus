@@ -75,5 +75,8 @@ export function reportedLimits(info: TypeInfo): string[] {
 }
 
 export function limitPreview(text: string, limit: number): string {
-  return text.length > limit ? text.slice(0, limit) + "..." : text;
+  if (text.length <= limit) return text;
+  // A character outside the BMP, such as an emoji, uses a pair of UTF-16 code units.
+  const splitPair = /[\uD800-\uDBFF]/.test(text[limit - 1] ?? "") && /[\uDC00-\uDFFF]/.test(text[limit] ?? "");
+  return text.slice(0, splitPair ? limit - 1 : limit) + "...";
 }

@@ -3,7 +3,11 @@ import type {
   TypeInfo,
   TypeTree,
 } from "@prettify-ts-plus-plus/typescript-plugin/src/type-tree/types";
-import { integerSetting } from "@prettify-ts-plus-plus/typescript-plugin/src/options";
+import {
+  DISPLAY_DEFAULTS,
+  integerSetting,
+  MAX_TYPE_INDENTATION,
+} from "@prettify-ts-plus-plus/typescript-plugin/src/options";
 
 type RenderContext = "type" | "declaration" | "call";
 
@@ -73,6 +77,13 @@ function omitted(count: number, separator = ""): string {
   return count > 0 ? " /* " + separator + "... " + count + " more */" : "";
 }
 
+function methodSignatures(tree: Extract<TypeTree, { kind: "function" }>, name: string): string {
+  return (
+    tree.signatures.map((signature) => name + signatureText(signature, "call") + ";").join(" ") +
+    omitted(tree.excessSignatures)
+  );
+}
+
 /** Index just past the quoted or template literal starting at `start`, including nested `${}` expressions. */
 function literalEnd(text: string, start: number): number {
   const quote = text[start];
@@ -120,6 +131,17 @@ function needsGrouping(text: string, arrayElement: boolean): boolean {
     else if (!depth && (character === "?" || (arrayElement && (character === "|" || character === "&")))) return true;
   }
   return false;
+}
+
+/** Both an array's `[]` and an unlabeled tuple slot's `?` must apply to the entire element type. */
+function needsPostfixGrouping(element: TypeTree, text: string): boolean {
+  return (
+    element.kind === "union" ||
+    element.kind === "intersection" ||
+    element.kind === "function" ||
+    ((element.kind === "array" || element.kind === "tuple") && element.readonly) ||
+    ((element.kind === "reference" || element.kind === "primitive") && needsGrouping(text, true))
+  );
 }
 
 /** Pure serialization with explicit syntax contexts and precedence. */
@@ -176,15 +198,24 @@ export function stringifyTypeTree(tree: TypeTree, anonymousFunction: boolean | R
     )
       return "{}";
     const signatures = (tree.signatures ?? []).map((signature) => signatureText(signature, "call") + ";");
-    const properties = tree.properties.map(
-      (property) =>
-        (property.readonly ? "readonly " : "") +
-        propertyKey(property.name, property.computed) +
-        (property.optional ? "?" : "") +
-        ": " +
-        stringifyTypeTree(property.type) +
-        ";",
-    );
+    const properties = tree.properties.map((property) => {
+      const name = propertyKey(property.name, property.computed) + (property.optional ? "?" : "");
+      if (property.writeType)
+        return (
+          "get " +
+          name +
+          "(): " +
+          stringifyTypeTree(property.type) +
+          "; set " +
+          name +
+          "(value: " +
+          property.writeType +
+          ");"
+        );
+      if (property.type.kind === "function" && property.type.method && !property.readonly)
+        return methodSignatures(property.type, name);
+      return (property.readonly ? "readonly " : "") + name + ": " + stringifyTypeTree(property.type) + ";";
+    });
     const members = [...signatures, ...properties, ...never].join(" ");
     const markers = (omitted(tree.excessProperties) + omitted(tree.excessSignatures ?? 0)).trimStart();
     return "{ " + (members && markers ? members + " " + markers : members || markers) + " }";
@@ -198,11 +229,7 @@ export function stringifyTypeTree(tree: TypeTree, anonymousFunction: boolean | R
           let text = stringifyTypeTree(element.type);
           const rest = element.rest ? "..." : "";
           if (element.name) return rest + element.name + (element.optional ? "?" : "") + ": " + text;
-          if (
-            element.optional &&
-            (element.type.kind === "union" || element.type.kind === "intersection" || element.type.kind === "function")
-          )
-            text = "(" + text + ")";
+          if (element.optional && needsPostfixGrouping(element.type, text)) text = "(" + text + ")";
           return rest + text + (element.optional ? "?" : "");
         })
         .join(", ") +
@@ -212,17 +239,13 @@ export function stringifyTypeTree(tree: TypeTree, anonymousFunction: boolean | R
   if (tree.kind === "array") {
     const element = tree.elementType;
     let text = stringifyTypeTree(element);
-    if (
-      element.kind === "union" ||
-      element.kind === "intersection" ||
-      element.kind === "function" ||
-      ((element.kind === "array" || element.kind === "tuple") && element.readonly) ||
-      ((element.kind === "reference" || element.kind === "primitive") && needsGrouping(text, true))
-    )
-      text = "(" + text + ")";
+    if (needsPostfixGrouping(element, text)) text = "(" + text + ")";
     return (tree.readonly ? "readonly " : "") + text + "[]";
   }
   if (tree.kind === "function") {
+    // A readonly field or standalone type cannot declare a method directly. Looking up its
+    // method type keeps the same parameter variance, including for indexed-access aliases.
+    if (tree.method && context === "type") return "{ " + methodSignatures(tree, "method") + ' }["method"]';
     if (tree.signatures.length === 1)
       return signatureText(tree.signatures[0]!, context) + omitted(tree.excessSignatures);
     return (
@@ -269,7 +292,7 @@ function shortenModulePaths(text: string): string {
 /** Format whitespace only. Quoted text, template literals, and comments are opaque. */
 export function prettyPrintTypeString(input: string, indentation = 2): string {
   input = shortenModulePaths(input);
-  const spaces = integerSetting(indentation, 4, 0);
+  const spaces = integerSetting(indentation, DISPLAY_DEFAULTS.typeIndentation, 0, MAX_TYPE_INDENTATION);
   if (!spaces) return input;
   // Build completed lines separately so formatting stays linear in the input size.
   const lines: string[] = [];
@@ -390,14 +413,43 @@ export function renderTypeInfo(info: TypeInfo, indentation: number): string {
   return declaration + type;
 }
 
-/**
- * Sanitizes a string by removing leading words, whitespace, newlines, and semicolons.
- * Used only to decide whether TypeScript's own hover already shows the same type.
- */
+/** Compare hover declarations while preserving literal contents, type operators, and qualified names. */
 export function sanitizeString(str: string): string {
-  return str
-    .replace(/^[a-z]+\s/, "") // Remove the leading word, ex: type, const, interface
-    .replace(/\s/g, "") // Remove all whitespace
-    .replace(/;/g, "") // Remove all semicolons
-    .replace(/\b[a-zA-Z_][a-zA-Z0-9_]*\./g, ""); // Remove namespaces (e.g., z.)
+  const text = str
+    .trim()
+    .replace(/^(?:(?:export|declare|default|type|interface|class|function|const|let|var)\s+)+/, "");
+  let result = "";
+  const word = /[$\p{ID_Continue}]/u;
+  for (let index = 0; index < text.length; index++) {
+    const character = text[index]!;
+    if (character === '"' || character === "'" || character === "`") {
+      const end = literalEnd(text, index);
+      const literal = text.slice(index, end);
+      // The compiler normally prints double quotes; matching single-quoted source is the same literal.
+      result +=
+        character === "`"
+          ? literal
+          : JSON.stringify(
+              literal
+                .slice(1, -1)
+                .replace(/\\([\s\S])/g, (pair, escaped: string) =>
+                  escaped === "'" || escaped === '"' ? escaped : pair,
+                ),
+            );
+      index = end - 1;
+    } else if (text.startsWith("/*", index) || text.startsWith("//", index)) {
+      const block = text[index + 1] === "*";
+      const close = text.indexOf(block ? "*/" : "\n", index + 2);
+      const end = close < 0 ? text.length : close + (block ? 2 : 1);
+      result += text.slice(index, end);
+      index = end - 1;
+    } else if (character === ";" || /\s/.test(character)) {
+      const previous = text[index - 1];
+      while (index + 1 < text.length && /[\s;]/.test(text[index + 1]!)) index++;
+      if (previous && word.test(previous) && word.test(text[index + 1] ?? "")) result += " ";
+    } else {
+      result += character;
+    }
+  }
+  return result;
 }

@@ -12,7 +12,7 @@ import init from "../../packages/typescript-plugin/src";
 import { DEFAULT_OPTIONS, FULL_COPY_LIMITS, PREVIEW_LIMITS } from "../../packages/typescript-plugin/src/options";
 import type { PrettifyOptions, PrettifyRequest, PrettifyResponse } from "../../packages/typescript-plugin/src/request";
 import type { TypeInfo } from "../../packages/typescript-plugin/src/type-tree/types";
-import { renderTypeInfo, renderTypeParts } from "../../packages/vscode-extension/src/stringify-type-tree";
+import { renderTypeInfo } from "../../packages/vscode-extension/src/stringify-type-tree";
 
 export type SweepOptions = {
   name: string;
@@ -136,21 +136,10 @@ function parse(typescript: typeof ts, text: string): readonly ts.Diagnostic[] {
   return (file as unknown as { parseDiagnostics: ts.Diagnostic[] }).parseDiagnostics;
 }
 
-/**
- * Copy output must be pasteable, with three accepted exceptions:
- * - `typeof import("x"): ...` is a display-only header, so only its type is checked;
- * - names that are not identifiers (`default`, `export`, `aria-label`) are shown as written, so a placeholder is checked;
- * - `-Infinity` is a type the compiler prints but TypeScript has no syntax for.
- */
+/** Parse the exact text the Copy commands put on the clipboard. */
 function parseErrors(typescript: typeof ts, info: TypeInfo): { detail: string; signature: string }[] {
-  const { declaration, type } = renderTypeParts(info, 4);
-  let text = declaration.startsWith("typeof import(") ? "type Rendered = " + type : renderTypeInfo(info, 4);
-  text = text.replace(/(?<![\w$.])-Infinity\b/g, "number");
-  let diagnostics = parse(typescript, text);
-  if (diagnostics.length && parse(typescript, `let ${info.name};`).length && declaration.includes(info.name)) {
-    text = text.replace(info.name, "Rendered");
-    diagnostics = parse(typescript, text);
-  }
+  const text = renderTypeInfo(info, 4);
+  const diagnostics = parse(typescript, text);
   return diagnostics.map((diagnostic) => {
     const message = typescript.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
     const start = diagnostic.start ?? 0;

@@ -30,6 +30,10 @@ export const DEFAULT_OPTIONS: PrettifyOptions = {
 
 export const DISPLAY_DEFAULTS = { enabled: true, typeIndentation: 4, maxCharacters: 20000 };
 
+// Spaces are allocated for every indented line. Even at the 256-level Full Copy depth, 64 spaces per
+// level fits in 16 KiB per indent while leaving regular editor widths and wider custom widths available.
+export const MAX_TYPE_INDENTATION = 64;
+
 /** Upper bound for numeric settings; large enough that it never limits a real preview. */
 export const MAX_SETTING = 1_000_000_000;
 
@@ -86,6 +90,7 @@ export function normalizeOptions(input: Partial<PrettifyOptions> = {}): Prettify
       : [...DEFAULT_OPTIONS[key]];
   }
   result.fullExpansion = input.fullExpansion === true;
+  if (input.unwrapPromises === false && !result.fullExpansion) result.unwrapPromises = false;
   result.copy = input.copy === true || result.fullExpansion;
   result.groupNeverProperties = input.groupNeverProperties === true && !result.copy;
   result.showSource = input.showSource === true && !result.copy;
