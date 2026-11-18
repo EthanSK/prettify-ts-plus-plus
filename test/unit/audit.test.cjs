@@ -625,3 +625,30 @@ test("a generic name at its use site shows the arguments written there", () => {
     assert.match(inspect(source, "Box<123>", mode).text, /value: 123/);
   }
 });
+
+test("a compiler printer failure on a recursive alias falls back to its written type", () => {
+  const source = "type Test<T extends unknown[]> = T extends [infer A, ...infer Rest] ? [A, ...Test<Rest>] : [];";
+  const { program, checker, sourceFile } = programFor(source);
+  const normalPrint = checker.typeToString.bind(checker);
+  checker.typeToString = (type, ...args) => {
+    if (type.flags & ts.TypeFlags.Conditional) throw new TypeError("failed to print recursive tuple");
+    return normalPrint(type, ...args);
+  };
+  for (const fullExpansion of [false, true]) {
+    const errors = [];
+    const info = api.getTypeInfoAtPosition(
+      ts,
+      checker,
+      sourceFile,
+      source.indexOf("Test") + 1,
+      { ...api.DEFAULT_OPTIONS, copy: true, fullExpansion },
+      undefined,
+      { compilerOptions: program.getCompilerOptions(), onError: (error) => errors.push(error) },
+    );
+    assert.deepEqual(errors, []);
+    const copy = api.renderTypeInfo(info, 4);
+    parses(copy);
+    assert.match(copy, /\.\.\.Test<Rest>/);
+    assert.equal(info.truncationReasons, undefined);
+  }
+});

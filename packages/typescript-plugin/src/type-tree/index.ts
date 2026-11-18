@@ -32,6 +32,7 @@ export function getTypeInfoAtPosition(
   let textCharacters = 0;
   let inaccessibleNames = 0;
   const namedReferences = new Map<ts.Type, { symbol: ts.Symbol; name?: string }>();
+  let signatureBindings = new Map<string, ts.TypeParameter>();
   const exactOptional = control.compilerOptions?.exactOptionalPropertyTypes === true;
   // The hovered type always expands: naming rules below only shorten what is nested inside it.
   let rootType: ts.Type | undefined;
@@ -170,7 +171,7 @@ export function getTypeInfoAtPosition(
     return node ? printTypeNode(node, text) : text;
   }
 
-  function printTypeNode(node: ts.TypeNode, originalText?: string): string {
+  function printTypeNode(node: ts.TypeNode | ts.TypeParameterDeclaration, originalText?: string): string {
     // The checker prints 1e999 as Infinity, a value name rather than a numeric type literal.
     // Replace only numeric literal nodes; a type alias, property or quoted string named Infinity stays intact.
     let changed = false;
@@ -186,7 +187,9 @@ export function getTypeInfoAtPosition(
         },
       },
     );
-    const printed = printer.printNode(typescript.EmitHint.Unspecified, node, sourceFile);
+    // Reused syntax can come from another file. Its own text preserves quoted/template literals;
+    // the printer drops comments and inserts member separators before our indentation pass.
+    const printed = printer.printNode(typescript.EmitHint.Unspecified, node, node.getSourceFile() ?? sourceFile);
     return changed || originalText === undefined ? printed : originalText;
   }
 
@@ -197,7 +200,22 @@ export function getTypeInfoAtPosition(
     const flags =
       (expandAlias ? typescript.TypeFormatFlags.InTypeAlias : typescript.TypeFormatFlags.None) |
       (enclosingScope ? typescript.TypeFormatFlags.UseFullyQualifiedType : typescript.TypeFormatFlags.None);
-    const text = typeText(type, flags, enclosingScope);
+    let text: string;
+    try {
+      text = typeText(type, flags, enclosingScope);
+    } catch (error) {
+      // TypeScript can throw while printing recursive variadic tuples in a deferred conditional.
+      // At the alias declaration its own right-hand side is an exact, in-scope copy.
+      const definition = hoverNode.parent;
+      if (
+        !options.copy ||
+        type !== rootType ||
+        !typescript.isTypeAliasDeclaration(definition) ||
+        definition.name !== hoverNode
+      )
+        throw error;
+      text = printTypeNode(definition.type);
+    }
     if (compilerElision.test(text)) reasons.add("compiler text limit");
     return { kind: "reference", typeName: boundedText(text) };
   }
@@ -236,7 +254,9 @@ export function getTypeInfoAtPosition(
       const node = checker.typeToTypeNode(
         type,
         printScope,
-        typescript.NodeBuilderFlags.UseFullyQualifiedType | typescript.NodeBuilderFlags.NoTruncation,
+        typescript.NodeBuilderFlags.UseFullyQualifiedType |
+          typescript.NodeBuilderFlags.NoTruncation |
+          typescript.NodeBuilderFlags.AllowNodeModulesRelativePaths,
       );
       const reachable =
         node &&
@@ -254,23 +274,84 @@ export function getTypeInfoAtPosition(
   /** A public generic can contain a private argument (`PublicBox<Hidden>`). Only project through
    * instantiations whose arguments have no names to capture. Otherwise let their public owner supply the path.
    */
-  function propertyOwnerName(type: ts.Type): string | undefined {
+  function propertyOwnerName(type: ts.Type, useSignatureBindings = false): string | undefined {
     const owner = type.aliasSymbol ?? type.getSymbol();
     const named = typescript.SymbolFlags.TypeAlias | typescript.SymbolFlags.Class | typescript.SymbolFlags.Interface;
     if (!owner || !(owner.flags & named) || owner === canonicalSymbol(checker.getSymbolAtLocation(hoverNode))) return;
     const typeArguments =
       type.aliasTypeArguments ??
       ((type as ts.TypeReference).target ? checker.getTypeArguments(type as ts.TypeReference) : []);
+    if (!typeArguments.every((argument) => visibleArgument(argument))) return;
+    return reachableName(type, owner);
+
+    function visibleArgument(argument: ts.Type, depth = 0): boolean {
+      if (!canPreprocess() || depth >= limits.depth) return false;
+      if (isPrimitiveType(argument))
+        return !(argument.flags & (typescript.TypeFlags.UniqueESSymbol | typescript.TypeFlags.TemplateLiteral));
+      if (!useSignatureBindings) return false;
+      if (argument.isTypeParameter()) return signatureBindings.get(argument.getSymbol()?.getName() ?? "") === argument;
+      // An argument such as Awaited<T> needs both the visible alias and the signature's actual T.
+      const alias = argument.aliasSymbol;
+      return !!(
+        alias &&
+        !signatureBindings.has(alias.name) &&
+        canonicalSymbol(checker.resolveName(alias.name, hoverNode, typescript.SymbolFlags.Type, false)) === alias &&
+        argument.aliasTypeArguments?.length &&
+        argument.aliasTypeArguments.every((inner) => visibleArgument(inner, depth + 1))
+      );
+    }
+  }
+
+  /** At Max Depth, copying a foreign private mapped alias can make the compiler print its entire
+   * recursive definition. A public argument's required property can name the exact same instantiation.
+   */
+  function indexedMappedReference(type: ts.Type): string | undefined {
+    if (!options.copy || !((type as ts.ObjectType).objectFlags & typescript.ObjectFlags.Mapped)) return;
+    const alias = type.aliasSymbol;
+    const args = type.aliasTypeArguments;
+    const declaration = alias?.declarations?.find(typescript.isTypeAliasDeclaration);
     if (
-      typeArguments.some(
-        (argument) =>
-          !canPreprocess() ||
-          !isPrimitiveType(argument) ||
-          !!(argument.flags & (typescript.TypeFlags.UniqueESSymbol | typescript.TypeFlags.TemplateLiteral)),
-      )
+      !alias ||
+      !args?.length ||
+      declaration?.typeParameters?.length !== args.length ||
+      !typescript.isSourceFile(declaration.parent)
     )
       return;
-    return reachableName(type, owner);
+    const file = declaration.parent;
+    if (file === sourceFile || !typescript.isExternalModule(file)) return;
+    const module = checker.getSymbolAtLocation(file);
+    if (!module || canonicalSymbol(module.exports?.get(alias.escapedName)) === alias) return;
+    for (const owner of args) {
+      const ownerSymbol = owner.aliasSymbol ?? owner.getSymbol();
+      if (!ownerSymbol || !(ownerSymbol.flags & (typescript.SymbolFlags.Class | typescript.SymbolFlags.Interface)))
+        continue;
+      for (const member of checker.getPropertiesOfType(owner)) {
+        if (!canPreprocess()) return;
+        if (
+          !(member.flags & typescript.SymbolFlags.Property) ||
+          member.flags & typescript.SymbolFlags.Optional ||
+          isSymbolProperty(member) ||
+          restrictedClassVisibility(member)
+        )
+          continue;
+        const value = checker.getTypeOfSymbol(member);
+        // TypeScript may allocate two equivalent mapped objects. A source-file-level alias has no
+        // enclosing generic bindings: its own symbol and every argument completely identify the application.
+        if (
+          value !== type &&
+          !(
+            value.aliasSymbol === alias &&
+            value.aliasTypeArguments?.length === args.length &&
+            value.aliasTypeArguments.every((arg, index) => arg === args[index])
+          )
+        )
+          continue;
+        const name = propertyOwnerName(owner, true);
+        if (name) return name + "[" + JSON.stringify(member.getName()) + "]";
+        break;
+      }
+    }
+    return undefined;
   }
 
   /** Source references inside the very declaration being copied can spell otherwise unnameable identities. */
@@ -293,7 +374,7 @@ export function getTypeInfoAtPosition(
       !typescript.findAncestor(annotation, (node) => node === writtenType)
     )
       return undefined;
-    return checker.getTypeFromTypeNode(annotation) === type ? annotation.getText() : undefined;
+    return checker.getTypeFromTypeNode(annotation) === type ? printTypeNode(annotation) : undefined;
   }
 
   /**
@@ -515,7 +596,7 @@ export function getTypeInfoAtPosition(
       if (!copiedVariable.className) reasons.add("private class identity omitted");
     } else if (nominal) {
       if (type === rootType && aliasDeclaration)
-        return { kind: "reference", typeName: boundedText(declaration.type.getText()) };
+        return { kind: "reference", typeName: boundedText(printTypeNode(declaration.type)) };
       const symbol = type.aliasSymbol ?? type.getSymbol();
       const name = symbol && reachableName(type, symbol);
       if (name) return { kind: "reference", typeName: boundedText(name) };
@@ -564,6 +645,9 @@ export function getTypeInfoAtPosition(
     if (apparent.flags & typescript.TypeFlags.Object || members.length || indexes.length || signatures.length) {
       if (depth >= options.maxDepth) {
         reasons.add("object depth limit");
+        const indexed = indexedMappedReference(type);
+        if (indexed) return { kind: "reference", typeName: boundedText(indexed) };
+        if (!canPreprocess()) return { kind: "reference", typeName: "unknown /* expansion limit */" };
         if (type.aliasSymbol || (type.getSymbol() && !type.getSymbol()!.getName().startsWith("__")))
           return reference(type, false, options.copy ? printScope : undefined);
         return { kind: "object", typeName: "", properties: [], excessProperties: members.length + indexes.length };
@@ -689,6 +773,23 @@ export function getTypeInfoAtPosition(
   }
 
   function getSignature(
+    signature: ts.Signature,
+    depth: number,
+    visited: Set<ts.Type>,
+    construct = false,
+  ): TypeFunctionSignature {
+    if (!options.copy || !signature.typeParameters?.length) return buildSignature(signature, depth, visited, construct);
+    const previous = signatureBindings;
+    signatureBindings = new Map(previous);
+    for (const parameter of signature.typeParameters) signatureBindings.set(parameter.symbol.name, parameter);
+    try {
+      return buildSignature(signature, depth, visited, construct);
+    } finally {
+      signatureBindings = previous;
+    }
+  }
+
+  function buildSignature(
     signature: ts.Signature,
     depth: number,
     visited: Set<ts.Type>,
@@ -1164,10 +1265,7 @@ export function getTypeInfoAtPosition(
     // Preserve compact references such as Array<typeof seed>. Printing the resolved type can expand
     // the entire object behind seed and cache those nodes for each hover. A substitution or shadowed
     // name still needs the compiler's spelling at the copy location.
-    if (generic && ref && declared === resolved && hasSameBindings(ref)) {
-      const text = ref.getText();
-      if (!text.includes("//")) return text;
-    }
+    if (generic && ref && declared === resolved && hasSameBindings(ref)) return printTypeNode(ref);
     // Preserve an erased primitive alias only if its original name still resolves to the very same binding.
     if (
       !generic &&
@@ -1571,7 +1669,7 @@ export function getTypeInfoAtPosition(
           ? written
           : undefined;
       tree = deferredReference
-        ? { kind: "reference", typeName: boundedText(deferredReference.getText()) }
+        ? { kind: "reference", typeName: boundedText(printTypeNode(deferredReference)) }
         : expandFairly(() => getTypeTree(type, 0, new Set(), annotation));
       if (copiedVariable?.className && (tree.kind === "object" || tree.kind === "function"))
         tree = {
@@ -1595,7 +1693,14 @@ export function getTypeInfoAtPosition(
           ? declarationNode.typeParameters
           : undefined;
       const declarationName = declaredParameters?.length
-        ? boundedText(name + "<" + declaredParameters.map((parameter) => parameter.getText()).join(", ") + ">")
+        ? boundedText(
+            name +
+              "<" +
+              declaredParameters
+                .map((parameter) => (options.copy ? printTypeNode(parameter) : parameter.getText()))
+                .join(", ") +
+              ">",
+          )
         : name;
       declaration = getSyntaxKindDeclaration(kind, declarationName);
       if (deferredReference && typeReference) {
@@ -1603,7 +1708,7 @@ export function getTypeInfoAtPosition(
         const owner = typescript.findAncestor(typeReference, typescript.isTypeAliasDeclaration);
         const label =
           owner?.type === typeReference ? owner.name.text : name === "Prettified" ? "PrettifiedType" : "Prettified";
-        const parameters = owner?.typeParameters?.map((parameter) => parameter.getText()).join(", ");
+        const parameters = owner?.typeParameters?.map((parameter) => printTypeNode(parameter)).join(", ");
         declaration = "type " + label + (parameters ? "<" + parameters + ">" : "") + " = ";
       }
       if (declaration.startsWith("function") && tree.kind !== "function") declaration = "const " + name + ": ";
