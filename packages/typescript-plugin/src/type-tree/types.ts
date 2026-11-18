@@ -9,6 +9,8 @@ export type TypeProperty = {
   type: TypeTree;
   /** Paired accessor whose setter accepts a different type from the getter. */
   writeType?: string;
+  /** The named class supplies these members. Redeclaring them as public can reduce an intersection to never. */
+  classVisibility?: "private" | "protected";
 };
 
 /**

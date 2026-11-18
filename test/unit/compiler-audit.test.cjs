@@ -5,7 +5,7 @@ const ts = require(process.env.PRETTIFY_TEST_TYPESCRIPT_PATH || "typescript");
 const api = require("../out-unit/entry");
 
 function programFor(source, exact = true) {
-  const file = path.join(__dirname, "compiler-audit.ts");
+  const file = path.join(__dirname, "compiler-audit.ts").split(path.sep).join("/");
   const options = { strict: true, exactOptionalPropertyTypes: exact, target: ts.ScriptTarget.ESNext, types: [] };
   const host = ts.createCompilerHost(options);
   const getSourceFile = host.getSourceFile;
@@ -15,14 +15,17 @@ function programFor(source, exact = true) {
   return { program, checker: program.getTypeChecker(), file: program.getSourceFile(file) };
 }
 
-function render(source, config = {}, exact = true) {
+function render(source, config = {}, exact = true, marker, expectedLimits) {
   const { program, checker, file } = programFor(source, exact);
-  const declaration = file.statements.find((node) => ts.isTypeAliasDeclaration(node) && node.name.text === "Test");
+  const position = marker
+    ? source.indexOf(marker)
+    : file.statements.find((node) => ts.isTypeAliasDeclaration(node) && node.name.text === "Test").name.getStart(file);
+  assert.ok(position >= 0, marker);
   const result = api.getTypeInfoAtPosition(
     ts,
     checker,
     file,
-    declaration.name.getStart(file) + 1,
+    position + 1,
     { ...api.DEFAULT_OPTIONS, maxDepth: 8, ...config },
     undefined,
     {
@@ -33,7 +36,7 @@ function render(source, config = {}, exact = true) {
     },
   );
   assert.ok(result);
-  assert.equal(result.truncationReasons, undefined);
+  assert.deepEqual(result.truncationReasons, expectedLimits);
   return api.renderTypeInfo(result, 0);
 }
 
@@ -181,4 +184,44 @@ test("nominal types stay named through root aliases, public containers, and anon
     "type Test = { api: N.Public; anonymous: typeof instance };";
   const text = checkCopy(source, { fullExpansion: true }, assignBothWays);
   assert.doesNotMatch(text, /\(Anonymous class\)|value: Hidden/);
+});
+
+test("root class variable copies show configured fields and preserve the original private identity", () => {
+  const source =
+    "declare class FilteringExample { publicField: string; _publicField: string; " +
+    "private privateField: '*/'; protected protectedField: number } declare let sample: FilteringExample; sample;";
+  for (const fullExpansion of [false, true]) {
+    for (const hidePrivateProperties of [false, true]) {
+      for (const treatUnderscoreAsPrivate of [false, true]) {
+        const options = { copy: true, fullExpansion, hidePrivateProperties, treatUnderscoreAsPrivate };
+        const text = render(source, options, true, "sample:");
+        assert.match(text, /^let sample: FilteringExample & \{ publicField: string;/);
+        assert.equal(text.includes("_publicField:"), !hidePrivateProperties || !treatUnderscoreAsPrivate);
+        assert.equal(text.includes("privateField:"), !hidePrivateProperties);
+        assert.equal(text.includes("protectedField:"), !hidePrivateProperties);
+        const copied = text.replace(/^let sample:/, "declare let copied:");
+        const uses =
+          "sample = copied; copied = sample; " +
+          "// @ts-expect-error Ordinary objects lack the class's private identity.\n" +
+          "copied = { publicField: 'x', _publicField: 'y' };";
+        const { program, file } = programFor(source + "\n" + copied + ";\n" + uses);
+        assert.deepEqual(
+          [...program.getSyntacticDiagnostics(file), ...program.getSemanticDiagnostics(file)].map((d) =>
+            ts.flattenDiagnosticMessageText(d.messageText, "\n"),
+          ),
+          [],
+          text,
+        );
+      }
+    }
+  }
+  assert.match(render(source, { copy: true }, true, "sample;"), /FilteringExample & \{ publicField: string;/);
+});
+
+test("an unnameable root class variable still shows fields and marks its omitted private identity", () => {
+  const source = "const sample = new class { private brand = 1; publicField = 'hello' }();";
+  assert.match(
+    render(source, { copy: true }, true, "sample =", ["private class identity omitted"]),
+    /publicField: string;/,
+  );
 });

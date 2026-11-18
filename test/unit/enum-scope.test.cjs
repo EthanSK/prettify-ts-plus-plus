@@ -7,7 +7,8 @@ const api = require("../out-unit/entry");
 // Insert both copies back into the hovered lexical scope. Checking assignability in both directions also catches
 // a syntactically valid name that binds to a different enum, or a subset replaced by the whole enum.
 function checkEnumCopies(source, modules = {}, exact = false) {
-  const file = path.join(__dirname, "enum-scope-virtual.ts");
+  const virtualFile = (name) => path.join(__dirname, name).split(path.sep).join("/");
+  const file = virtualFile("enum-scope-virtual.ts");
   const options = {
     strict: true,
     exactOptionalPropertyTypes: exact,
@@ -18,7 +19,7 @@ function checkEnumCopies(source, modules = {}, exact = false) {
     types: [],
   };
   function programFor(main) {
-    const files = new Map(Object.entries(modules).map(([name, text]) => [path.join(__dirname, name), text]));
+    const files = new Map(Object.entries(modules).map(([name, text]) => [virtualFile(name), text]));
     files.set(file, main);
     const host = ts.createCompilerHost(options);
     const { fileExists, readFile } = host;

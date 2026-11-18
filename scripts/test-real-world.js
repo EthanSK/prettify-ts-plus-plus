@@ -94,13 +94,22 @@ function sweep(project, dir) {
   };
   console.log(`\nSweeping ${project.name} (${positions} positions)`);
   const started = Date.now();
-  run(process.execPath, [
-    "--max-old-space-size=8192",
-    path.join(outDir, "sweep.js"),
-    dir,
-    JSON.stringify(options),
-    reportPath,
-  ]);
+  const breadcrumb = reportPath + ".current";
+  fs.rmSync(breadcrumb, { force: true });
+  try {
+    run(process.execPath, [
+      "--max-old-space-size=8192",
+      path.join(outDir, "sweep.js"),
+      dir,
+      JSON.stringify(options),
+      reportPath,
+    ]);
+  } catch (error) {
+    if (fs.existsSync(breadcrumb)) console.error("Last sweep operation:", fs.readFileSync(breadcrumb, "utf8"));
+    throw error;
+  } finally {
+    fs.rmSync(breadcrumb, { force: true });
+  }
   const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
   report.totalSeconds = (Date.now() - started) / 1000;
   return report;

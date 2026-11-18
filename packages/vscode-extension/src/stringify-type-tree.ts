@@ -1,6 +1,7 @@
 import type {
   TypeFunctionSignature,
   TypeInfo,
+  TypeProperty,
   TypeTree,
 } from "@prettify-ts-plus-plus/typescript-plugin/src/type-tree/types";
 import {
@@ -61,6 +62,25 @@ function propertyKey(name: string, computed?: boolean): string {
     (/^(?:0|[1-9]\d*)$/.test(name) && Number.isSafeInteger(Number(name)))
     ? name
     : JSON.stringify(name);
+}
+
+function propertyText(property: TypeProperty): string {
+  const name = propertyKey(property.name, property.computed) + (property.optional ? "?" : "");
+  if (property.writeType)
+    return (
+      "get " +
+      name +
+      "(): " +
+      stringifyTypeTree(property.type) +
+      "; set " +
+      name +
+      "(value: " +
+      property.writeType +
+      ");"
+    );
+  if (property.type.kind === "function" && property.type.method && !property.readonly)
+    return methodSignatures(property.type, name);
+  return (property.readonly ? "readonly " : "") + name + ": " + stringifyTypeTree(property.type) + ";";
 }
 
 /**
@@ -199,22 +219,10 @@ export function stringifyTypeTree(tree: TypeTree, anonymousFunction: boolean | R
       return "{}";
     const signatures = (tree.signatures ?? []).map((signature) => signatureText(signature, "call") + ";");
     const properties = tree.properties.map((property) => {
-      const name = propertyKey(property.name, property.computed) + (property.optional ? "?" : "");
-      if (property.writeType)
-        return (
-          "get " +
-          name +
-          "(): " +
-          stringifyTypeTree(property.type) +
-          "; set " +
-          name +
-          "(value: " +
-          property.writeType +
-          ");"
-        );
-      if (property.type.kind === "function" && property.type.method && !property.readonly)
-        return methodSignatures(property.type, name);
-      return (property.readonly ? "readonly " : "") + name + ": " + stringifyTypeTree(property.type) + ";";
+      const text = propertyText(property);
+      return property.classVisibility
+        ? "/* " + property.classVisibility + " " + text.replace(/\*\//g, "*\\/") + " */"
+        : text;
     });
     const members = [...signatures, ...properties, ...never].join(" ");
     const markers = (omitted(tree.excessProperties) + omitted(tree.excessSignatures ?? 0)).trimStart();

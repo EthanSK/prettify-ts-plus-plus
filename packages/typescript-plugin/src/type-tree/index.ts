@@ -5,7 +5,7 @@ import type { PrettifyOptions } from "../request";
 import { FULL_COPY_LIMITS, PREVIEW_LIMITS, normalizeOptions } from "../options";
 import { getDescendantAtRange } from "./get-ast-node";
 import { getPositionForVue } from "./vue";
-import { enumParent, resolvedReadonly, resolvedSetterType } from "./compiler-internals";
+import { enumParent, resolvedAbstract, resolvedReadonly, resolvedSetterType } from "./compiler-internals";
 import { getAuthoredSource } from "./source";
 
 export type AnalysisControl = {
@@ -35,7 +35,9 @@ export function getTypeInfoAtPosition(
   const exactOptional = control.compilerOptions?.exactOptionalPropertyTypes === true;
   // The hovered type always expands: naming rules below only shorten what is nested inside it.
   let rootType: ts.Type | undefined;
+  let copiedVariable: { declaration: ts.VariableDeclaration; className?: string } | undefined;
   let hoverNode: ts.Node = sourceFile;
+  let printScope: ts.Node = sourceFile;
   // Approximate serialized bytes per visited node, so traversal stops with a partial tree
   // before the response-size check below has to discard the whole result.
   const serializedNodeEstimate = 80;
@@ -108,6 +110,33 @@ export function getTypeInfoAtPosition(
     return best.tree;
   }
 
+  /** TypeScript caches printed structures on the enclosing node. Share a scope across ordinary
+   * expressions and variable statements, stopping before any syntax that can introduce bindings.
+   * Name lookups still use the exact cursor, including inside conditional types and signatures.
+   */
+  function sharedPrintScope(node: ts.Node): ts.Node {
+    let current = node;
+    while (current.parent) {
+      const parent = current.parent;
+      if (typescript.isSourceFile(parent) || typescript.isBlock(parent) || typescript.isModuleBlock(parent))
+        return parent;
+      if (
+        !typescript.isPropertyAccessExpression(parent) &&
+        !typescript.isElementAccessExpression(parent) &&
+        !typescript.isCallExpression(parent) &&
+        !typescript.isExpressionStatement(parent) &&
+        !typescript.isTypeReferenceNode(parent) &&
+        !typescript.isQualifiedName(parent) &&
+        !typescript.isVariableDeclaration(parent) &&
+        !typescript.isVariableDeclarationList(parent) &&
+        !typescript.isVariableStatement(parent)
+      )
+        break;
+      current = parent;
+    }
+    return current;
+  }
+
   function boundedText(text: string): string {
     if (textCharacters + text.length > limits.characters) {
       reasons.add("type text budget");
@@ -121,11 +150,7 @@ export function getTypeInfoAtPosition(
    * Previews keep the compiler's ordinary truncation (`Foo<...>`), which protects structural reference fallbacks.
    * Copies must paste as valid TypeScript, so they ask for the full text; the text budget still bounds it.
    */
-  function typeText(
-    type: ts.Type,
-    flags = typescript.TypeFormatFlags.None,
-    enclosingScope = options.copy ? hoverNode : undefined,
-  ): string {
+  function typeText(type: ts.Type, flags = typescript.TypeFormatFlags.None, enclosingScope?: ts.Node): string {
     const format = options.copy ? flags | typescript.TypeFormatFlags.NoTruncation : flags;
     const text = checker.typeToString(type, enclosingScope, format);
     if (!options.copy || !text.includes("Infinity")) return text;
@@ -198,7 +223,7 @@ export function getTypeInfoAtPosition(
     if (namedReferences.get(type)?.symbol !== symbol) {
       const node = checker.typeToTypeNode(
         type,
-        hoverNode,
+        printScope,
         typescript.NodeBuilderFlags.UseFullyQualifiedType | typescript.NodeBuilderFlags.NoTruncation,
       );
       const reachable =
@@ -208,7 +233,7 @@ export function getTypeInfoAtPosition(
             resolveTypeName(node.typeName, typescript.SymbolFlags.Type) === symbol));
       namedReferences.set(type, {
         symbol,
-        name: reachable ? typeText(type, typescript.TypeFormatFlags.UseFullyQualifiedType, hoverNode) : undefined,
+        name: reachable ? typeText(type, typescript.TypeFormatFlags.UseFullyQualifiedType, printScope) : undefined,
       });
     }
     return namedReferences.get(type)?.name;
@@ -266,7 +291,7 @@ export function getTypeInfoAtPosition(
   function typeParameterConstraint(parameter: ts.TypeParameter): TypeTree | undefined {
     const node = checker.typeParameterToDeclaration(
       parameter,
-      options.copy ? hoverNode : undefined,
+      options.copy ? printScope : undefined,
       typescript.NodeBuilderFlags.IgnoreErrors |
         (options.copy
           ? typescript.NodeBuilderFlags.UseFullyQualifiedType
@@ -309,7 +334,7 @@ export function getTypeInfoAtPosition(
     if (skippedName) return { kind: "reference", typeName: boundedText(skippedName) };
     if (visited.has(type)) {
       const name = type.aliasSymbol?.getName() ?? type.getSymbol()?.getName();
-      if (name && !name.startsWith("__")) return reference(type);
+      if (name && !name.startsWith("__")) return reference(type, false, options.copy ? printScope : undefined);
       reasons.add("circular reference");
       return { kind: "reference", typeName: "unknown /* circular */" };
     }
@@ -329,7 +354,7 @@ export function getTypeInfoAtPosition(
             typescript.findAncestor(declaration, (ancestor) => ancestor === hoverNode.parent)))
       )
         return { kind: "primitive", typeName: "unique symbol" };
-      const text = typeText(type, typescript.TypeFormatFlags.None, hoverNode);
+      const text = typeText(type, typescript.TypeFormatFlags.None, printScope);
       return text === "unique symbol"
         ? inaccessibleReference("unique symbol")
         : { kind: "reference", typeName: boundedText(text) };
@@ -370,7 +395,7 @@ export function getTypeInfoAtPosition(
     ) {
       // Skipped types are not expanded; copies keep their arguments (`Map<string, number>`) to stay valid.
       const skipped = options.copy
-        ? typeText(type, typescript.TypeFormatFlags.UseFullyQualifiedType, hoverNode)
+        ? typeText(type, typescript.TypeFormatFlags.UseFullyQualifiedType, printScope)
         : (genericName ?? name)! + (args.length ? "<...>" : "");
       return { kind: "reference", typeName: boundedText(skipped) };
     }
@@ -382,7 +407,7 @@ export function getTypeInfoAtPosition(
       let hovered = type === rootType ? checker.getSymbolAtLocation(hoverNode) : undefined;
       if (hovered && hovered.flags & typescript.SymbolFlags.Alias) hovered = checker.getAliasedSymbol(hovered);
       // A variable can keep its visible alias. On the alias itself, print its definition to avoid `type A = A`.
-      return reference(type, !!hovered && hovered === type.aliasSymbol, hoverNode);
+      return reference(type, !!hovered && hovered === type.aliasSymbol, printScope);
     }
     if (genericName && args.length && options.unwrapGenericArgumentsTypeNames.includes(genericName)) {
       // An import alias or exported namespace member may have a different spelling at the hover site.
@@ -391,11 +416,11 @@ export function getTypeInfoAtPosition(
         const expand = !!aliasName && !aliasArgs;
         const node = checker.typeToTypeNode(
           type,
-          hoverNode,
+          printScope,
           typescript.NodeBuilderFlags.UseFullyQualifiedType | (expand ? typescript.NodeBuilderFlags.InTypeAlias : 0),
         );
         if (!node || !typescript.isTypeReferenceNode(node) || !node.typeArguments?.length)
-          return reference(type, expand, hoverNode);
+          return reference(type, expand, printScope);
         visibleName = typescript.createPrinter().printNode(typescript.EmitHint.Unspecified, node.typeName, sourceFile);
       }
       return {
@@ -460,7 +485,7 @@ export function getTypeInfoAtPosition(
     const constructs = apparent.getConstructSignatures();
     // An object construct signature cannot say `abstract new`. The compiler preserves the
     // constructor type (and any intersection with static properties) as one expression.
-    if (constructs.some(isAbstractConstructor)) return reference(type, true, hoverNode);
+    if (constructs.some(isAbstractConstructor)) return reference(type, true, printScope);
     if (calls.length && !options.unwrapFunctions && (type.aliasSymbol || type.isClassOrInterface()))
       return reference(type);
     let members = apparent.getProperties();
@@ -468,8 +493,13 @@ export function getTypeInfoAtPosition(
     // private properties are visible. Keep class and interface declarations inspectable.
     const declaration = hoverNode.parent;
     const aliasDeclaration = typescript.isTypeAliasDeclaration(declaration) && declaration.name === hoverNode;
-    const variableDeclaration = typescript.isVariableDeclaration(declaration) && declaration.name === hoverNode;
-    if ((visited.size || aliasDeclaration || variableDeclaration) && preserveClassIdentity(type, members)) {
+    if (!visited.size && copiedVariable && preserveClassIdentity(type, members)) {
+      // Copy commands show the configured members of the variable itself. Its named class
+      // also keeps the private/protected constraint that a plain list of fields cannot express.
+      copiedVariable.className =
+        originalTypeReference(copiedVariable.declaration.type, type) ?? propertyOwnerName(type);
+      if (!copiedVariable.className) reasons.add("private class identity omitted");
+    } else if ((visited.size || aliasDeclaration) && preserveClassIdentity(type, members)) {
       if (type === rootType && aliasDeclaration)
         return { kind: "reference", typeName: boundedText(declaration.type.getText()) };
       const symbol = type.aliasSymbol ?? type.getSymbol();
@@ -521,7 +551,7 @@ export function getTypeInfoAtPosition(
       if (depth >= options.maxDepth) {
         reasons.add("object depth limit");
         if (type.aliasSymbol || (type.getSymbol() && !type.getSymbol()!.getName().startsWith("__")))
-          return reference(type);
+          return reference(type, false, options.copy ? printScope : undefined);
         return { kind: "object", typeName: "", properties: [], excessProperties: members.length + indexes.length };
       }
       const limit = depth ? options.maxSubProperties : options.maxProperties;
@@ -559,6 +589,8 @@ export function getTypeInfoAtPosition(
             ? { kind: "primitive", typeName: "never" }
             : getTypeTree(propertyType, depth + 1, next, annotation, optional),
         };
+        if (!visited.size && copiedVariable?.className && !options.hidePrivateProperties)
+          property.classVisibility = restrictedClassVisibility(symbol);
         if (inaccessibleNames > inaccessibleBeforeProperty) {
           let spelling = originalTypeReference(annotation, propertyType);
           if (!spelling) {
@@ -581,7 +613,7 @@ export function getTypeInfoAtPosition(
             typescript,
             checker,
             symbol,
-            hoverNode,
+            printScope,
             typescript.NodeBuilderFlags.UseFullyQualifiedType |
               (options.copy ? typescript.NodeBuilderFlags.NoTruncation : 0),
           );
@@ -589,7 +621,7 @@ export function getTypeInfoAtPosition(
           else if (write) {
             const text = printTypeNode(write);
             if (compilerElision.test(text)) reasons.add("compiler text limit");
-            if (text !== typeText(propertyType, typescript.TypeFormatFlags.None, hoverNode))
+            if (text !== typeText(propertyType, typescript.TypeFormatFlags.None, printScope))
               property.writeType = boundedText(text);
           }
         }
@@ -621,6 +653,8 @@ export function getTypeInfoAtPosition(
   }
 
   function isAbstractConstructor(signature: ts.Signature): boolean {
+    const abstract = resolvedAbstract(typescript, signature);
+    if (abstract !== undefined) return abstract;
     const declaration = signature.getDeclaration();
     if (declaration && typescript.isConstructSignatureDeclaration(declaration)) return false;
     // A class can inherit an abstract construct signature with no source declaration.
@@ -630,7 +664,7 @@ export function getTypeInfoAtPosition(
         : checker.signatureToSignatureDeclaration(
             signature,
             typescript.SyntaxKind.ConstructorType,
-            hoverNode,
+            printScope,
             undefined,
           );
     return (
@@ -802,7 +836,7 @@ export function getTypeInfoAtPosition(
     const flags = options.copy
       ? typescript.TypeFormatFlags.None
       : typescript.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope;
-    const name = boundedText(typeText(member ? checker.getDeclaredTypeOfSymbol(member) : type, flags, hoverNode));
+    const name = boundedText(typeText(member ? checker.getDeclaredTypeOfSymbol(member) : type, flags, printScope));
     return member ? { kind: "enum", typeName: "", member: name } : { kind: "reference", typeName: name };
   }
 
@@ -1113,6 +1147,13 @@ export function getTypeInfoAtPosition(
       }
       return generic ? name + "<...>" : name;
     }
+    // Preserve compact references such as Array<typeof seed>. Printing the resolved type can expand
+    // the entire object behind seed and cache those nodes for each hover. A substitution or shadowed
+    // name still needs the compiler's spelling at the copy location.
+    if (generic && ref && declared === resolved && hasSameBindings(ref)) {
+      const text = ref.getText();
+      if (!text.includes("//")) return text;
+    }
     // Preserve an erased primitive alias only if its original name still resolves to the very same binding.
     if (
       !generic &&
@@ -1125,7 +1166,36 @@ export function getTypeInfoAtPosition(
     const flags =
       typescript.TypeFormatFlags.UseFullyQualifiedType |
       (name === "Array" || name === "ReadonlyArray" ? typescript.TypeFormatFlags.WriteArrayAsGenericType : 0);
-    return typeText(resolved, flags, hoverNode);
+    return typeText(resolved, flags, printScope);
+
+    function hasSameBindings(node: ts.Node): boolean {
+      if (!canPreprocess()) return false;
+      if (typescript.isTypeReferenceNode(node) || typescript.isTypeQueryNode(node)) {
+        const query = typescript.isTypeQueryNode(node);
+        const name = query ? node.exprName : node.typeName;
+        let root = name;
+        while (typescript.isQualifiedName(root)) root = root.left;
+        const meaning = query
+          ? typescript.SymbolFlags.Value
+          : root === name
+            ? typescript.SymbolFlags.Type
+            : typescript.SymbolFlags.Namespace;
+        const original = canonicalSymbol(checker.getSymbolAtLocation(root));
+        if (!original || original !== canonicalSymbol(checker.resolveName(root.text, hoverNode, meaning, false)))
+          return false;
+        return !node.typeArguments || node.typeArguments.every(hasSameBindings);
+      }
+      // Relative import types, this, fresh unique symbols and names outside a checked reference can
+      // depend on their original location. Leave these forms to the scoped compiler printer.
+      if (
+        typescript.isImportTypeNode(node) ||
+        typescript.isThisTypeNode(node) ||
+        typescript.isIdentifier(node) ||
+        (typescript.isTypeOperatorNode(node) && node.operator === typescript.SyntaxKind.UniqueKeyword)
+      )
+        return false;
+      return !typescript.forEachChild(node, (child) => (hasSameBindings(child) ? undefined : true));
+    }
   }
 
   function getArrayElementAnnotation(annotation: ts.Node | undefined): ts.TypeNode | undefined {
@@ -1232,27 +1302,23 @@ export function getTypeInfoAtPosition(
     const target = (type as ts.TypeReference).target ?? type;
     return (
       (target.isClassOrInterface() || type.isIntersection()) &&
-      members.some((member) => !canPreprocess() || isRestrictedClassMember(member))
+      members.some((member) => !canPreprocess() || restrictedClassVisibility(member))
     );
   }
 
-  function isRestrictedClassMember(symbol: ts.Symbol): boolean {
-    return !!symbol.getDeclarations()?.some((declaration) => {
+  function restrictedClassVisibility(symbol: ts.Symbol): TypeProperty["classVisibility"] {
+    for (const declaration of symbol.getDeclarations() ?? []) {
       const name = typescript.getNameOfDeclaration(declaration);
-      return (
-        (!!name && typescript.isPrivateIdentifier(name)) ||
-        !!(
-          typescript.getCombinedModifierFlags(declaration) &
-          (typescript.ModifierFlags.Private | typescript.ModifierFlags.Protected)
-        )
-      );
-    });
+      const flags = typescript.getCombinedModifierFlags(declaration);
+      if ((name && typescript.isPrivateIdentifier(name)) || flags & typescript.ModifierFlags.Private) return "private";
+      if (flags & typescript.ModifierFlags.Protected) return "protected";
+    }
   }
 
   function isPublicProperty(symbol: ts.Symbol): boolean {
     if (options.treatUnderscoreAsPrivate !== false && symbol.getName().startsWith("_") && !isSymbolProperty(symbol))
       return false;
-    return !isRestrictedClassMember(symbol);
+    return !restrictedClassVisibility(symbol);
   }
 
   function getSyntaxKindDeclaration(syntaxKind: ts.SyntaxKind, typeName: string): string {
@@ -1323,6 +1389,7 @@ export function getTypeInfoAtPosition(
     const node = getDescendantAtRange(typescript, sourceFile, [position, position]);
     if (!node || node === sourceFile || !node.parent) return undefined;
     hoverNode = node;
+    printScope = sharedPrintScope(node);
     // `as const` is a keyword, not a type: the compiler resolves it to an unresolved `const` symbol.
     if (typescript.isConstTypeReference(node.parent)) return undefined;
     let symbol = checker.getSymbolAtLocation(node);
@@ -1389,7 +1456,7 @@ export function getTypeInfoAtPosition(
         : getSyntaxKindDeclaration(typescript.SyntaxKind.Constructor, name);
       if (options.copy && !newExpression) {
         // A class value also carries static members, overloads and constructor accessibility.
-        tree = reference(type, false, hoverNode);
+        tree = reference(type, false, printScope);
       } else {
         const signature = newExpression ? checker.getResolvedSignature(newExpression) : constructSignatures[0];
         if (!signature) return undefined;
@@ -1405,7 +1472,15 @@ export function getTypeInfoAtPosition(
         typeReference ??
         (typescript.isTypeAliasDeclaration(node.parent) ? node.parent.name : getTypeAnnotation(symbol));
       rootType = type;
+      if (options.copy && declarationNode && typescript.isVariableDeclaration(declarationNode))
+        copiedVariable = { declaration: declarationNode };
       tree = expandFairly(() => getTypeTree(type, 0, new Set(), annotation));
+      if (copiedVariable?.className && (tree.kind === "object" || tree.kind === "function"))
+        tree = {
+          kind: "intersection",
+          typeName: "",
+          types: [{ kind: "reference", typeName: boundedText(copiedVariable.className) }, tree],
+        };
       if (inaccessibleNames && typescript.isTypeAliasDeclaration(node.parent) && node.parent.name === node) {
         const spelling = originalTypeReference(node.parent.type, type);
         if (spelling) {

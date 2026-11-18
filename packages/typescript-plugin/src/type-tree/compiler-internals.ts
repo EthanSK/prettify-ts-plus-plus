@@ -15,6 +15,15 @@ export function resolvedReadonly(typescript: typeof ts, symbol: ts.Symbol): bool
   return undefined;
 }
 
+/** The compiler sets this bit on inherited constructors as well as written signatures.
+ * Reading it avoids materializing the entire constructor type simply to inspect its modifier.
+ */
+export function resolvedAbstract(typescript: typeof ts, signature: ts.Signature): boolean | undefined {
+  const flag = (typescript as typeof ts & { SignatureFlags?: { Abstract?: number } }).SignatureFlags?.Abstract;
+  const flags = (signature as ts.Signature & { flags?: number }).flags;
+  return flag === undefined || flags === undefined ? undefined : (flags & flag) !== 0;
+}
+
 export function enumParent(symbol: ts.Symbol): ts.Symbol | undefined {
   return (symbol as ts.Symbol & { parent?: ts.Symbol }).parent;
 }

@@ -5,7 +5,8 @@
 - Keep enum members and generic wrappers qualified where they are used, including renamed imports and quoted enum members.
 - Copy the resolved arguments of skipped types. For example, a field from `Library<number>` copies as `Map<string, number>` while its hover stays compact.
 - Show string transformations such as `Uppercase<string>` on one line. Preserve narrowing, optional tuple syntax, abstract constructors, method signatures, getter and setter types, and unique symbol identities in copied types.
-- Keep the identity of nested classes with private or protected members. Preserve public properties whose quoted names start with `#`.
+- Copy a class variable with its configured visible fields and preserve the identity of private and protected members. Preserve public properties whose quoted names start with `#`.
+- Keep references such as `Array<typeof seed>` compact when their names still resolve at the cursor. Reuse the compiler’s printed types across nearby copies.
 - Produce valid copy declarations for quoted property names and default exports. Preserve positive and negative numeric infinity literals in copies.
 - Keep distinct hovers visible and remove duplicate sections that differ only in quote style. Saved `unwrapPromises: false` settings work when no explicit generic list overrides them.
 - Keep the most recent Copy command when requests overlap, preserve complete characters when shortening a hover, and bound excessive indentation.

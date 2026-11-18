@@ -155,7 +155,11 @@ function parseErrors(typescript: typeof ts, info: TypeInfo): { detail: string; s
   });
 }
 
-export function sweep(projectDir: string, options: SweepOptions): SweepReport {
+export function sweep(
+  projectDir: string,
+  options: SweepOptions,
+  beforeStep?: (description: string) => void,
+): SweepReport {
   const typescript = loadTypeScript(projectDir);
   const languageService = createLanguageService(typescript, projectDir, options.tsconfig);
   const logs: string[] = [];
@@ -214,6 +218,7 @@ export function sweep(projectDir: string, options: SweepOptions): SweepReport {
     const position = node.getStart(sourceFile) + Math.floor(node.text.length / 2);
     const { line, character } = sourceFile.getLineAndCharacterOfPosition(position);
     const location = `${relative(fileName)}:${line + 1}:${character + 1}`;
+    beforeStep?.(`${mode} ${location} ${node.text}`);
     const stats = report.modes[mode];
     const logStart = logs.length;
     stats.requests++;
@@ -286,6 +291,7 @@ export function sweep(projectDir: string, options: SweepOptions): SweepReport {
     const sourceFile = program.getSourceFile(fileName);
     if (!sourceFile) continue;
     // An open editor has already checked the file; measure the plugin, not the first type check.
+    beforeStep?.(`checking ${name}`);
     started = performance.now();
     languageService.getSemanticDiagnostics(fileName);
     report.warmupMs += performance.now() - started;
@@ -312,6 +318,9 @@ if (require.main === module) {
   if (!projectDir || !optionsJson || !reportPath) {
     throw new Error("Usage: sweep.js <project-dir> <options-json> <report-json>");
   }
-  const report = sweep(path.resolve(projectDir), JSON.parse(optionsJson) as SweepOptions);
+  // A fatal compiler/heap failure cannot run a JS error handler. Keep the last operation for the parent.
+  const report = sweep(path.resolve(projectDir), JSON.parse(optionsJson) as SweepOptions, (description) =>
+    fs.writeFileSync(reportPath + ".current", description),
+  );
   fs.writeFileSync(reportPath, JSON.stringify(report));
 }
