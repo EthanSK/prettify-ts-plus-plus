@@ -258,3 +258,16 @@ test("cancelling a class visibility scan stops before serializing its type", () 
   assert.ok(info === undefined || info.truncationReasons?.includes("cancelled"));
   assert.equal(serializedAfterCancellation, 0);
 });
+
+test("opaque expressions qualify nested namespace names at the copy destination", () => {
+  const source =
+    "namespace Api { export interface Row { value: string } export interface Brand { readonly key: unique symbol } " +
+    "export interface Box<T extends keyof Row> { match: T extends keyof Row ? Row : never; " +
+    "at: Row[T]; id: string & Brand; list: Row[]; make: () => Row } } type Test<T extends keyof Api.Row> = Api.Box<T>;";
+  const uses = 'declare let a: Test<"value">; declare let b: Copied<"value">; a = b; b = a;';
+  for (const mode of [{ unwrapArrays: false, unwrapFunctions: false }, { fullExpansion: true }]) {
+    const text = checkCopy(source, mode, uses);
+    assert.match(text, /Api\.Row\[T\]/);
+    assert.match(text, /string & Api\.Brand/);
+  }
+});

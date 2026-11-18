@@ -151,6 +151,12 @@ export function getTypeInfoAtPosition(
    * Copies must paste as valid TypeScript, so they ask for the full text; the text budget still bounds it.
    */
   function typeText(type: ts.Type, flags = typescript.TypeFormatFlags.None, enclosingScope?: ts.Node): string {
+    // A deferred expression can contain names from another namespace (Row[T], string & Brand).
+    // Literal and intrinsic types do not need a lexical cache entry to print their spelling.
+    const scoped =
+      !isPrimitiveType(type) ||
+      !!(type.flags & (typescript.TypeFlags.TemplateLiteral | typescript.TypeFlags.StringMapping));
+    enclosingScope ??= options.copy && scoped ? printScope : undefined;
     const format = options.copy ? flags | typescript.TypeFormatFlags.NoTruncation : flags;
     const text = checker.typeToString(type, enclosingScope, format);
     if (!options.copy || !text.includes("Infinity")) return text;
