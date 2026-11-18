@@ -289,7 +289,8 @@ export function getTypeInfoAtPosition(
       if (isPrimitiveType(argument))
         return !(argument.flags & (typescript.TypeFlags.UniqueESSymbol | typescript.TypeFlags.TemplateLiteral));
       if (!useSignatureBindings) return false;
-      if (argument.isTypeParameter()) return signatureBindings.get(argument.getSymbol()?.getName() ?? "") === argument;
+      if (argument.flags & typescript.TypeFlags.TypeParameter)
+        return signatureBindings.get(argument.getSymbol()?.getName() ?? "") === argument;
       // An argument such as Awaited<T> needs both the visible alias and the signature's actual T.
       const alias = argument.aliasSymbol;
       return !!(
