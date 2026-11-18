@@ -27,10 +27,7 @@ export function getAuthoredSource(
   const parent = node.parent;
   const declaresName =
     (typescript.isTypeAliasDeclaration(parent) || typescript.isInterfaceDeclaration(parent)) && parent.name === node;
-  if (declaresName || typeReferenceName(typescript, node)) {
-    const declaration = onlyTypeDeclaration(typescript, symbol);
-    return declaration && sourceOf(declaration, declaration.getStart());
-  }
+  if (declaresName || typeReferenceName(typescript, node)) return getAuthoredTypeDeclaration(typescript, symbol);
   const declarations = symbol.declarations ?? [];
   const holder = declarations.length === 1 ? declarations[0] : undefined;
   if (
@@ -54,16 +51,21 @@ export function getAuthoredSource(
     // Claude Opus 5.5
     let target = checker.getSymbolAtLocation(annotation.typeName);
     if (target && target.flags & typescript.SymbolFlags.Alias) target = checker.getAliasedSymbol(target);
-    const declaration = target && onlyTypeDeclaration(typescript, target);
-    return declaration && sourceOf(declaration, declaration.getStart());
+    return target && getAuthoredTypeDeclaration(typescript, target);
   }
   const start =
     typescript.isParameter(holder) && holder.dotDotDotToken ? holder.dotDotDotToken.getStart() : holder.name.getStart();
   return sourceOf(holder, start, annotation.end);
 }
 
+/** A bounded source excerpt for a single declaration, including an uninstantiated import. */
+export function getAuthoredTypeDeclaration(typescript: typeof ts, symbol: ts.Symbol): TypeSource | undefined {
+  const declaration = onlyTypeDeclaration(typescript, symbol);
+  return declaration && sourceOf(declaration, declaration.getStart());
+}
+
 /** `Foo` in `Foo<T>` and `A` in `ns.A`, but not `ns` itself. Claude Opus 5.5 */
-function typeReferenceName(typescript: typeof ts, node: ts.Node): ts.TypeReferenceNode | undefined {
+export function typeReferenceName(typescript: typeof ts, node: ts.Node): ts.TypeReferenceNode | undefined {
   let name: ts.Node = node;
   while (typescript.isQualifiedName(name.parent) && name.parent.right === name) name = name.parent;
   return typescript.isTypeReferenceNode(name.parent) && name.parent.typeName === name ? name.parent : undefined;

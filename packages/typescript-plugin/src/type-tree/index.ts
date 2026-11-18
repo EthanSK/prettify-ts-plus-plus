@@ -6,7 +6,7 @@ import { FULL_COPY_LIMITS, PREVIEW_LIMITS, normalizeOptions } from "../options";
 import { getDescendantAtRange } from "./get-ast-node";
 import { getPositionForVue } from "./vue";
 import { enumParent, resolvedAbstract, resolvedReadonly, resolvedSetterType } from "./compiler-internals";
-import { getAuthoredSource } from "./source";
+import { getAuthoredSource, getAuthoredTypeDeclaration, typeReferenceName } from "./source";
 
 export type AnalysisControl = {
   isCancellationRequested?: () => boolean;
@@ -160,7 +160,13 @@ export function getTypeInfoAtPosition(
     const format = options.copy ? flags | typescript.TypeFormatFlags.NoTruncation : flags;
     const text = checker.typeToString(type, enclosingScope, format);
     if (!options.copy || !text.includes("Infinity")) return text;
-    const node = checker.typeToTypeNode(type, enclosingScope, format & typescript.TypeFormatFlags.NodeBuilderFlagsMask);
+    // Match typeToString's node-builder flags. Even an unrelated empty tuple can otherwise return no AST,
+    // leaving the compiler's display spelling `-Infinity` in an otherwise copyable conditional type.
+    const node = checker.typeToTypeNode(
+      type,
+      enclosingScope,
+      (format & typescript.TypeFormatFlags.NodeBuilderFlagsMask) | typescript.NodeBuilderFlags.IgnoreErrors,
+    );
     return node ? printTypeNode(node, text) : text;
   }
 
@@ -1337,6 +1343,46 @@ export function getTypeInfoAtPosition(
     return !restrictedClassVisibility(symbol);
   }
 
+  /** An import selects the generic definition itself. A one-binding import preserves its
+   * parameters, private helpers and re-export path without instantiating the dependency. */
+  function selectedGenericImport(node: ts.Node, target: ts.Symbol) {
+    const parent = node.parent;
+    const specifier =
+      typescript.isImportSpecifier(parent) && (parent.name === node || parent.propertyName === node)
+        ? parent
+        : undefined;
+    const clause = specifier
+      ? specifier.parent.parent
+      : typescript.isImportClause(parent) && parent.name === node
+        ? parent
+        : undefined;
+    if (!clause || !typescript.isImportDeclaration(clause.parent)) return undefined;
+    if (target.flags & (typescript.SymbolFlags.Class | typescript.SymbolFlags.Enum)) return undefined;
+    if (target.flags & typescript.SymbolFlags.Value && !clause.isTypeOnly && !specifier?.isTypeOnly) return undefined;
+    const definition = target.declarations?.find(
+      (declaration): declaration is ts.TypeAliasDeclaration | ts.InterfaceDeclaration =>
+        (typescript.isTypeAliasDeclaration(declaration) || typescript.isInterfaceDeclaration(declaration)) &&
+        !!declaration.typeParameters?.length,
+    );
+    if (!definition) return undefined;
+    const local = specifier?.name ?? clause.name;
+    if (!local) return undefined;
+    const factory = typescript.factory;
+    const binding = specifier
+      ? factory.createNamedImports([factory.createImportSpecifier(false, specifier.propertyName, local)])
+      : undefined;
+    const single = factory.createImportDeclaration(
+      undefined,
+      factory.createImportClause(true, binding ? undefined : local, binding),
+      clause.parent.moduleSpecifier,
+      clause.parent.attributes,
+    );
+    const statement = typescript
+      .createPrinter({ removeComments: true })
+      .printNode(typescript.EmitHint.Unspecified, single, sourceFile);
+    return { local: local.text, statement };
+  }
+
   function getSyntaxKindDeclaration(syntaxKind: ts.SyntaxKind, typeName: string): string {
     const SyntaxKind = typescript.SyntaxKind;
 
@@ -1411,17 +1457,24 @@ export function getTypeInfoAtPosition(
     let symbol = checker.getSymbolAtLocation(node);
     if (!symbol) return undefined;
     if (symbol.flags & typescript.SymbolFlags.Alias) symbol = checker.getAliasedSymbol(symbol);
+    const genericImport = selectedGenericImport(node, symbol);
     // getTypeAtLocation picks the right meaning for names shared by a type and a value, but returns `any` for
     // keywords such as `default` in `export default function`; the symbol's type is correct there.
-    let type = checker.getTypeAtLocation(node);
-    if (type.flags & typescript.TypeFlags.Any && !typescript.isIdentifier(node)) {
+    // The identifier in Box<number> denotes the generic declaration. Its enclosing type reference
+    // denotes Box<number>, which is what the developer sees and wants to inspect or copy here.
+    const typeReference = typeReferenceName(typescript, node);
+    let type = genericImport
+      ? undefined
+      : typeReference
+        ? checker.getTypeFromTypeNode(typeReference)
+        : checker.getTypeAtLocation(node);
+    if (type && type.flags & typescript.TypeFlags.Any && !typescript.isIdentifier(node)) {
       // A class declaration shows its instance members, as when hovering a class name.
       type =
         symbol.flags & typescript.SymbolFlags.Class && typescript.isClassDeclaration(node.parent)
           ? checker.getDeclaredTypeOfSymbol(symbol)
           : checker.getTypeOfSymbolAtLocation(symbol, node);
     }
-    const typeReference = typescript.isTypeReferenceNode(node.parent) ? node.parent : undefined;
     const typeDeclaration =
       typeReference &&
       symbol.declarations?.find(
@@ -1445,7 +1498,7 @@ export function getTypeInfoAtPosition(
             ? typescript.SyntaxKind.LetKeyword
             : typescript.SyntaxKind.VarKeyword;
     }
-    const name = boundedText(symbol.getName());
+    const name = boundedText(genericImport?.local ?? symbol.getName());
     // Only the constructed class itself (`new Foo()`, `new ns.Foo()`), not classes used as arguments or type arguments.
     const callee = typescript.isPropertyAccessExpression(node.parent) && node.parent.name === node ? node.parent : node;
     const newExpression =
@@ -1453,9 +1506,20 @@ export function getTypeInfoAtPosition(
     let tree: TypeTree;
     let declaration: string;
     let source: TypeSource | undefined;
-    const constructSignatures = type.getConstructSignatures();
+    const constructSignatures = type?.getConstructSignatures() ?? [];
     // Class values (constructor calls, static access, `extends`) show the constructor; declarations and imports do not.
-    if (
+    if (!type) {
+      if (!genericImport) return undefined;
+      declaration = boundedText(genericImport.statement);
+      tree = { kind: "reference", typeName: "" };
+      if (!options.copy && canPreprocess()) {
+        // Show the bounded definition in its original scope, where its private helpers mean
+        // what the author wrote. Clients with a source section also get the file and line.
+        const authored = getAuthoredTypeDeclaration(typescript, symbol);
+        if (options.showSource) source = authored;
+        else if (authored) declaration += "\n\n" + boundedText(authored.text + (authored.cut ? "…" : ""));
+      }
+    } else if (
       kind === typescript.SyntaxKind.ClassDeclaration &&
       !typescript.isClassDeclaration(node.parent) &&
       !typescript.findAncestor(
@@ -1490,7 +1554,25 @@ export function getTypeInfoAtPosition(
       rootType = type;
       if (options.copy && declarationNode && typescript.isVariableDeclaration(declarationNode))
         copiedVariable = { declaration: declarationNode };
-      tree = expandFairly(() => getTypeTree(type, 0, new Set(), annotation));
+      // An imported conditional with open arguments cannot resolve yet. Expanding its private recursive
+      // helpers in the consumer's scope can exhaust the server heap before any traversal budget is checked.
+      const alias =
+        typescript.isTypeAliasDeclaration(node.parent) && node.parent.name === node ? node.parent : undefined;
+      const written = typeReference ?? alias?.type;
+      const deferredReference =
+        options.copy &&
+        type.flags & typescript.TypeFlags.Conditional &&
+        written &&
+        typescript.isTypeReferenceNode(written) &&
+        canonicalSymbol(checker.getSymbolAtLocation(written.typeName))?.declarations?.some(
+          (owner) => owner.getSourceFile() !== sourceFile,
+        ) &&
+        checker.getTypeFromTypeNode(written) === type
+          ? written
+          : undefined;
+      tree = deferredReference
+        ? { kind: "reference", typeName: boundedText(deferredReference.getText()) }
+        : expandFairly(() => getTypeTree(type, 0, new Set(), annotation));
       if (copiedVariable?.className && (tree.kind === "object" || tree.kind === "function"))
         tree = {
           kind: "intersection",
@@ -1516,6 +1598,14 @@ export function getTypeInfoAtPosition(
         ? boundedText(name + "<" + declaredParameters.map((parameter) => parameter.getText()).join(", ") + ">")
         : name;
       declaration = getSyntaxKindDeclaration(kind, declarationName);
+      if (deferredReference && typeReference) {
+        // A standalone copy must not shadow the imported alias used on its right-hand side.
+        const owner = typescript.findAncestor(typeReference, typescript.isTypeAliasDeclaration);
+        const label =
+          owner?.type === typeReference ? owner.name.text : name === "Prettified" ? "PrettifiedType" : "Prettified";
+        const parameters = owner?.typeParameters?.map((parameter) => parameter.getText()).join(", ");
+        declaration = "type " + label + (parameters ? "<" + parameters + ">" : "") + " = ";
+      }
       if (declaration.startsWith("function") && tree.kind !== "function") declaration = "const " + name + ": ";
       // An interface header needs a body; arrays, references and skipped interfaces are written as aliases.
       if (declaration.startsWith("interface ") && tree.kind !== "object") {

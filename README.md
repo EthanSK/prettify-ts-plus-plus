@@ -37,6 +37,9 @@ convenient to interrupt language features. An installation on disk does not prov
 
 - **Useful names stay visible.** Whole enums and matching nested union aliases keep their names. Subsets and
   individual enum members remain distinct, and the root type still expands.
+- **Generic uses show their actual types.** Hover `Box<number>` to see its numeric fields. A skipped field
+  can read `Map<...>` in the popup and copy as `Map<string, number>`. At the import of a generic type,
+  Copy keeps the single type import, including the local name you chose.
 - **Excluded fields are easier to scan.** Proven optional-`never` fields can share a `/* never: ... */` comment in
   the hover. Both Copy commands retain actual property declarations and the compiler's constraints.
 - **Shared union fields can appear once.** Enable `prettify-ts-plus-plus.factorSharedUnionProperties` to put

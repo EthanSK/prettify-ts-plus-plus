@@ -3,6 +3,7 @@
 ## 1.1.5 — 2026-11-18
 
 - Keep enum members and generic wrappers qualified where they are used, including renamed imports and quoted enum members.
+- Hovering a generic at its use site now shows its actual arguments. For example, `Box<number>` shows a numeric field, and a recursive library type can resolve without expanding its entire definition.
 - Copy the resolved arguments of skipped types. For example, a field from `Library<number>` copies as `Map<string, number>` while its hover stays compact.
 - Show string transformations such as `Uppercase<string>` on one line. Preserve narrowing, optional tuple syntax, abstract constructors, method signatures, getter and setter types, and unique symbol identities in copied types.
 - Copy a class variable with its configured visible fields and preserve the identity of private and protected members. Preserve public properties whose quoted names start with `#`.

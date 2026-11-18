@@ -46,6 +46,8 @@ Local package files, extension-host activation and TypeScript-plugin registratio
 
 TypeScript can cache printed type nodes on the enclosing syntax node for the lifetime of a project. Repeatedly printing a structural type at different identifiers can keep a separate copy of its tree at each cursor. Simple literals can omit that scope. Deferred expressions such as `Row[T]` can contain names from another namespace. For those expressions, print at a shared lexical scope only while the bindings stay the same.
 
+The name in `PartialDeep<ObjectArrays>` refers to the generic declaration. The enclosing type reference has the actual object type. Asking the scoped printer to expand the unresolved declaration exhausted an 8 GB compiler heap on type-fest. Request the applied type from the reference node, including for qualified names.
+
 A skipped annotation such as `Array<typeof seed>` can be much shorter than the resolved object. Reuse it only when its type, names and value narrowing still match at the destination. The skipped-reference regression checks the ordinary copy path, shadowed names, narrowed values and a substituted type parameter. Stop a class visibility scan on cancellation before asking the compiler to serialize it.
 
 ## Preserve Marketplace updates when releasing

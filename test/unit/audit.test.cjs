@@ -583,7 +583,7 @@ test("copied infinity literals keep their numeric meaning, including in skipped 
 
 test("interfaces without an object body are written as aliases", () => {
   const { text } = inspect("let list: ReadonlyArray<string>;", "ReadonlyArray");
-  assert.match(text, /^type ReadonlyArray = readonly T\[\]/);
+  assert.match(text, /^type ReadonlyArray = readonly string\[\]$/);
   parses(text);
   const skipped = inspect("let created: Date;", "Date", { skippedTypeNames: ["Date"], copy: true }).text;
   assert.equal(skipped, "type Date = Date");
@@ -611,4 +611,17 @@ test("hovering the default keyword of a default export shows its type", () => {
       .text,
     /typeOnly/,
   );
+});
+
+test("a generic name at its use site shows the arguments written there", () => {
+  const source =
+    "namespace Api { export type Box<T> = { value: T }; } " +
+    "type Deep<T> = T extends object ? { [K in keyof T]?: Deep<T[K]> } : T; " +
+    'type Concrete = Deep<{ kind: "ready" }>; type Other = Api.Box<123>;';
+  for (const mode of [{}, { copy: true }, { fullExpansion: true }]) {
+    const deep = inspect(source, "Deep<{ kind:", mode).text;
+    assert.match(deep, /kind\?: "ready"/);
+    assert.doesNotMatch(deep, /\bT\b|unknown|expansion limit/);
+    assert.match(inspect(source, "Box<123>", mode).text, /value: 123/);
+  }
 });

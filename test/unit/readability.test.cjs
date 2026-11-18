@@ -482,3 +482,34 @@ type Test = { one: A.Box };`;
     assert.doesNotMatch(text, /import\(/);
   }
 });
+
+test("an imported recursive conditional keeps its written reference while its arguments are open", () => {
+  const dependency = path.join(__dirname, "deferred-dependency.ts").split(path.sep).join("/");
+  const dependencies = {
+    [dependency]:
+      "type Inner<T> = T extends object ? { [K in keyof T]?: Inner<T[K]> } : T; export type Deep<T> = Inner<T>;",
+  };
+  const source = 'import type { Deep } from "./deferred-dependency"; type Open<T> = Deep<T>;';
+  const { program, checker, sourceFile } = programFor(source, true, dependencies);
+  const print = checker.typeToString.bind(checker);
+  checker.typeToString = (type, ...args) => {
+    assert.equal(type.flags & ts.TypeFlags.Conditional, 0, "Never force the external recursive conditional to expand");
+    return print(type, ...args);
+  };
+  for (const fullExpansion of [false, true]) {
+    for (const offset of [source.indexOf("Open") + 1, source.lastIndexOf("Deep") + 1]) {
+      const info = api.getTypeInfoAtPosition(
+        ts,
+        checker,
+        sourceFile,
+        offset,
+        { ...api.DEFAULT_OPTIONS, copy: true, fullExpansion },
+        undefined,
+        { compilerOptions: program.getCompilerOptions() },
+      );
+      assert.ok(info);
+      assert.equal(api.renderTypeInfo(info, 0), "type Open<T> = Deep<T>");
+      assert.equal(info.truncationReasons, undefined);
+    }
+  }
+});
