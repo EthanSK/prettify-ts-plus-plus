@@ -22,13 +22,14 @@ const definition = `
   interface Api {
     <T>(value: T): Result<T>;
     poll: <T>(value: T) => Wrapped<Result<Awaited<T>>>;
+    shadowed: <Result>(value: Result) => Wrapped<import("./indexed-library").Result<Result>>;
     last: "visible";
   }
   declare const api: Api;
   declare const onlyOptional: { value: Wrapped<Maybe<string>> };
   export { type Result, type Maybe, type Api, api, onlyOptional };
 `;
-const usage = 'import { api, onlyOptional } from "./indexed-library";\nvoid api; void onlyOptional;';
+const usage = 'import { api, onlyOptional, type Result } from "./indexed-library";\nvoid api; void onlyOptional;';
 
 function compiler(source) {
   const files = { [consumer]: source, [library]: definition };
@@ -75,6 +76,7 @@ test("copying recursive private mapped returns uses the public property with the
   assert.equal(privatePrints, 0, "An exact required property should avoid printing the private mapped type: " + copied);
   assert.match(copied, /Result<T>\["ready"\]/);
   assert.match(copied, /Result<Awaited<T>>\["ready"\]/);
+  assert.match(copied, /import\("[^"]+"\)\.Result<Result>\["ready"\]/);
   assert.match(copied, /last: "visible"/);
   assert.doesNotMatch(copied, /Result<T>\["(?:maybe|other)"\]/);
   const optional = copy("onlyOptional");

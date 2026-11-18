@@ -31,7 +31,7 @@ export function getTypeInfoAtPosition(
   let nodes = 0;
   let textCharacters = 0;
   let inaccessibleNames = 0;
-  const namedReferences = new Map<ts.Type, { symbol: ts.Symbol; name?: string }>();
+  const namedReferences = new Map<ts.Type, { symbol: ts.Symbol; name?: string; rootName?: string }>();
   let signatureBindings = new Map<string, ts.TypeParameter>();
   const exactOptional = control.compilerOptions?.exactOptionalPropertyTypes === true;
   // The hovered type always expands: naming rules below only shorten what is nested inside it.
@@ -246,29 +246,38 @@ export function getTypeInfoAtPosition(
     );
   }
 
+  const qualifiedNameFlags =
+    typescript.NodeBuilderFlags.UseFullyQualifiedType |
+    typescript.NodeBuilderFlags.NoTruncation |
+    typescript.NodeBuilderFlags.AllowNodeModulesRelativePaths;
+
   /** The printer can emit a bare private name even when it is unbound or denotes a different symbol here.
    * Verify a printed entity name against its intended symbol before using it as a copyable reference.
    */
-  function reachableName(type: ts.Type, symbol: ts.Symbol): string | undefined {
+  function reachableName(type: ts.Type, symbol: ts.Symbol, inSignature = false): string | undefined {
     if (namedReferences.get(type)?.symbol !== symbol) {
-      const node = checker.typeToTypeNode(
-        type,
-        printScope,
-        typescript.NodeBuilderFlags.UseFullyQualifiedType |
-          typescript.NodeBuilderFlags.NoTruncation |
-          typescript.NodeBuilderFlags.AllowNodeModulesRelativePaths,
-      );
+      const node = checker.typeToTypeNode(type, printScope, qualifiedNameFlags);
       const reachable =
         node &&
         (typescript.isImportTypeNode(node) ||
           (typescript.isTypeReferenceNode(node) &&
             resolveTypeName(node.typeName, typescript.SymbolFlags.Type) === symbol));
+      let root = node && typescript.isTypeReferenceNode(node) ? node.typeName : undefined;
+      while (root && typescript.isQualifiedName(root)) root = root.left;
       namedReferences.set(type, {
         symbol,
+        rootName: root?.text,
         name: reachable ? typeText(type, typescript.TypeFormatFlags.UseFullyQualifiedType, printScope) : undefined,
       });
     }
-    return namedReferences.get(type)?.name;
+    const named = namedReferences.get(type);
+    if (inSignature && named?.name && named.rootName && signatureBindings.has(named.rootName)) {
+      // An imported Result in the consumer becomes the signature parameter in <Result>() => Result<Result>.
+      // Ask for the module-qualified owner so only its argument binds to the signature parameter.
+      const qualified = checker.typeToTypeNode(type, undefined, qualifiedNameFlags);
+      return qualified && typescript.isImportTypeNode(qualified) ? printTypeNode(qualified) : undefined;
+    }
+    return named?.name;
   }
 
   /** A public generic can contain a private argument (`PublicBox<Hidden>`). Only project through
@@ -282,7 +291,7 @@ export function getTypeInfoAtPosition(
       type.aliasTypeArguments ??
       ((type as ts.TypeReference).target ? checker.getTypeArguments(type as ts.TypeReference) : []);
     if (!typeArguments.every((argument) => visibleArgument(argument))) return;
-    return reachableName(type, owner);
+    return reachableName(type, owner, useSignatureBindings);
 
     function visibleArgument(argument: ts.Type, depth = 0): boolean {
       if (!canPreprocess() || depth >= limits.depth) return false;
